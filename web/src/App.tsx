@@ -41,11 +41,22 @@ export function App() {
   const [projectError, setProjectError] = useState<string | null>(null)
   const [projectStatus, setProjectStatus] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [solverRouteDialogOpen, setSolverRouteDialogOpen] = useState(false)
   const activeRouteSection = routeSections.find((section) => section.id === activeRouteSectionId) ?? routeSections[0]
 
   useEffect(() => {
     setActivityProjectId(projectId)
   }, [projectId])
+
+  useEffect(() => {
+    if (viewMode !== '3d') setSolverRouteDialogOpen(false)
+  }, [viewMode])
+
+  useEffect(() => {
+    if (!routeSections.some((section) => section.id === activeRouteSectionId)) {
+      setActiveRouteSectionId(routeSections[0]?.id ?? '')
+    }
+  }, [activeRouteSectionId, routeSections])
 
   useEffect(() => {
     const controlName = (control: Element) => (
@@ -112,11 +123,16 @@ export function App() {
   }, [projectId, viewMode])
 
   const setEntryCorridor: Dispatch<SetStateAction<EntryCorridorDefinition>> = useCallback((action) => {
-    setRouteSections((current) => current.map((section) => {
-      if (section.id !== activeRouteSectionId) return section
-      const corridor = typeof action === 'function' ? action(section.corridor) : action
-      return { ...section, corridor }
-    }))
+    setRouteSections((current) => {
+      const effectiveSectionId = current.some((section) => section.id === activeRouteSectionId)
+        ? activeRouteSectionId
+        : current[0]?.id
+      return current.map((section) => {
+        if (section.id !== effectiveSectionId) return section
+        const corridor = typeof action === 'function' ? action(section.corridor) : action
+        return { ...section, corridor }
+      })
+    })
   }, [activeRouteSectionId])
 
   const updateRouteSections: Dispatch<SetStateAction<RouteSectionDefinition[]>> = useCallback((action) => {
@@ -133,14 +149,21 @@ export function App() {
     setRouteSections(sections)
     setPlannedMissionDate(date)
     setPlannedRoute(route)
+    setSolverRouteDialogOpen(false)
+    setViewMode('3d')
   }, [])
 
   const setWaypointId: Dispatch<SetStateAction<string>> = useCallback((action) => {
-    setRouteSections((current) => current.map((section) => {
-      if (section.id !== activeRouteSectionId) return section
-      const targetId = typeof action === 'function' ? action(section.targetId) : action
-      return { ...section, targetId }
-    }))
+    setRouteSections((current) => {
+      const effectiveSectionId = current.some((section) => section.id === activeRouteSectionId)
+        ? activeRouteSectionId
+        : current[0]?.id
+      return current.map((section) => {
+        if (section.id !== effectiveSectionId) return section
+        const targetId = typeof action === 'function' ? action(section.targetId) : action
+        return { ...section, targetId }
+      })
+    })
   }, [activeRouteSectionId])
 
   const currentProjectState = (): ProjectState => ({
@@ -399,6 +422,7 @@ export function App() {
                 plannedRoute={plannedRoute}
                 onPlannedRouteChange={setPlannedRoute}
                 onOpenRoutePlanner={() => setViewMode('2d')}
+                onOpenRouteSelector={() => setSolverRouteDialogOpen(true)}
                 restoredMissionConfig={missionConfig}
                 restoredVisualConfig={visualConfig}
                 restoredMissionResult={missionResult}
@@ -408,6 +432,23 @@ export function App() {
                 onMissionResultChange={setMissionResult}
               />
             )}
+        </Suspense>
+      )}
+      {solverRouteDialogOpen && viewMode === '3d' && (
+        <Suspense fallback={<div className="solver-route-launcher"><div>Solver-Auswahl wird geladen …</div></div>}>
+          <TwoDView
+            projectId={projectId}
+            routeSections={routeSections}
+            onRouteSectionsChange={updateRouteSections}
+            activeRouteSectionId={activeRouteSectionId}
+            onActiveRouteSectionChange={setActiveRouteSectionId}
+            plannedMissionDate={plannedMissionDate}
+            plannedRoute={plannedRoute}
+            onApplyPlannedSolution={applyPlannedSolution}
+            missionConfig={missionConfig}
+            solverDialogOnly
+            onSolverDialogClose={() => setSolverRouteDialogOpen(false)}
+          />
         </Suspense>
       )}
     </main>

@@ -36,6 +36,15 @@ export interface WaypointRouteResult {
     variantId: string
   }
   startDate: string
+  genericTarget?: {
+    type: string
+    zoneId?: string
+    boundaryId?: string
+    distanceAU?: number
+    innerRadiusAU?: number
+    outerRadiusAU?: number
+    radiusAU?: number
+  }
   totalFlightDays: number
   spacecraftIntegration?: {
     validated: boolean
@@ -238,6 +247,7 @@ export interface WaypointRouteResult {
         transferPreviewDays?: number
         desiredExitDirection?: [number, number, number]
         desiredExitRadialDirection?: [number, number, number]
+        optimizedPassageNormal?: [number, number, number]
         lineOfSightClear?: boolean
         bestApproximation?: boolean
         requiresCurvedTransfer?: boolean
@@ -406,6 +416,15 @@ export function PlannedWaypointRoute({ route, orbitScale, inclinationScale, elap
     [inclinationScale, orbitScale, route.highFidelityNBody],
   )
   const waypoint = scenePosition(route.waypoint.positionKm, orbitScale, inclinationScale)
+  const zoneRadii = route.genericTarget?.type === 'zone'
+    ? {
+        inner: scenePosition([(route.genericTarget.innerRadiusAU ?? route.genericTarget.distanceAU ?? 0) * AU_KM, 0, 0], orbitScale, inclinationScale).length(),
+        outer: scenePosition([(route.genericTarget.outerRadiusAU ?? route.genericTarget.distanceAU ?? 0) * AU_KM, 0, 0], orbitScale, inclinationScale).length(),
+      }
+    : null
+  const boundaryRadius = route.genericTarget?.type === 'boundary'
+    ? scenePosition([(route.genericTarget.radiusAU ?? route.genericTarget.distanceAU ?? 0) * AU_KM, 0, 0], orbitScale, inclinationScale).length()
+    : 0
   const waypointIndex = route.waypoint.trajectoryIndex ?? route.trajectory.findIndex((point) => point.elapsedDays >= route.waypoint.encounterDay)
   const flybySegment = route.segments?.find((segment) => segment.id === 'jupiter-hyperbola')
   // The global view stays in one inertial frame and uses one transform only.
@@ -512,6 +531,18 @@ export function PlannedWaypointRoute({ route, orbitScale, inclinationScale, elap
   const showEncounterGhost = Math.abs(elapsedDays - route.waypoint.encounterDay) > 1
   return (
     <group>
+      {zoneRadii && zoneRadii.outer > zoneRadii.inner && (
+        <mesh rotation={[Math.PI / 2, 0, 0]} renderOrder={-2}>
+          <torusGeometry args={[(zoneRadii.inner + zoneRadii.outer) / 2, (zoneRadii.outer - zoneRadii.inner) / 2, 24, 160]} />
+          <meshBasicMaterial color="#5bc8ff" transparent opacity={0.075} side={THREE.DoubleSide} depthWrite={false} />
+        </mesh>
+      )}
+      {boundaryRadius > 0 && (
+        <mesh renderOrder={-2}>
+          <sphereGeometry args={[boundaryRadius, 64, 32]} />
+          <meshBasicMaterial color="#b98cff" transparent opacity={0.045} wireframe depthWrite={false} />
+        </mesh>
+      )}
       {showDispersion && uncertainty && route.uncertainty && (
         <group>
           {corridorGeometry && (

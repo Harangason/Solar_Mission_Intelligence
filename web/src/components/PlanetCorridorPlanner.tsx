@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useRef,
   useState,
   type Dispatch,
@@ -41,7 +42,12 @@ interface PlanetCorridorPlannerProps {
   passage: RoutePassageDefinition
   sunToTargetDirection?: Vector3Tuple | null
   actualEntryDirection?: Vector3Tuple | null
-  exitDirection?: Vector3Tuple | null
+  entryFlightDirection?: Vector3Tuple | null
+  exitRadialDirection?: Vector3Tuple | null
+  exitFlightDirection?: Vector3Tuple | null
+  passageNormalDirection?: Vector3Tuple | null
+  entrySourceName?: string | null
+  exitTargetName?: string | null
   epochLabel: string
 }
 
@@ -118,7 +124,12 @@ export function PlanetCorridorPlanner({
   passage,
   sunToTargetDirection = null,
   actualEntryDirection = null,
-  exitDirection = null,
+  entryFlightDirection = null,
+  exitRadialDirection = null,
+  exitFlightDirection = null,
+  passageNormalDirection = null,
+  entrySourceName = null,
+  exitTargetName = null,
   epochLabel,
 }: PlanetCorridorPlannerProps) {
   const svgRef = useRef<SVGSVGElement>(null)
@@ -142,9 +153,32 @@ export function PlanetCorridorPlanner({
     ?? (selectedTarget && 'parentId' in selectedTarget
       ? planets.find((planet) => planet.id === selectedTarget.parentId)
       : undefined)
+  const localThreeDBody: PlanetData | undefined = waypointId === 'sun'
+    ? {
+        id: sun.id,
+        name: sun.name,
+        massKg: 1.9885e30,
+        radiusKm: sun.radiusKm,
+        temperatureK: 5772,
+        distanceAu: 0,
+        orbitalPeriodDays: 0,
+        surfaceGravity: sun.surfaceGravity,
+        color: sun.color,
+        hasRings: false,
+      }
+    : localPlanet
   const localPlanetMoons = localPlanet
     ? moons.filter((moon) => moon.parentId === localPlanet.id)
     : []
+  const autoProjectionTargetRef = useRef('')
+
+  useEffect(() => {
+    const targetKey = `${waypointId}:${localThreeDBody?.id ?? ''}`
+    if (autoProjectionTargetRef.current === targetKey) return
+    autoProjectionTargetRef.current = targetKey
+    if (localThreeDBody && !isInterstellarTarget) setProjection('local3d')
+    else if (projection === 'local3d') setProjection(mainProjection)
+  }, [isInterstellarTarget, localThreeDBody?.id, mainProjection, projection, waypointId])
   const targetPhysics: CorridorTargetPhysics = {
     radiusKm: selectedTarget && 'radiusKm' in selectedTarget ? selectedTarget.radiusKm : undefined,
     surfaceGravity: selectedTarget && 'surfaceGravity' in selectedTarget ? selectedTarget.surfaceGravity : undefined,
@@ -452,10 +486,10 @@ export function PlanetCorridorPlanner({
           <button
             type="button"
             aria-pressed={isLocalThreeDProjection}
-            disabled={!localPlanet}
+            disabled={!localThreeDBody}
             onClick={() => setProjection('local3d')}
           >
-            3D lokal{localPlanet ? ` · ${localPlanet.name}` : ''}
+            3D lokal{localThreeDBody ? ` · ${localThreeDBody.name}` : ''}
           </button>
         </div>
         <span className={isMainProjection ? 'projection-mode-badge main' : 'projection-mode-badge'}>
@@ -480,16 +514,21 @@ export function PlanetCorridorPlanner({
         </span>
       </div>}
 
-      {isLocalThreeDProjection && localPlanet
+      {isLocalThreeDProjection && localThreeDBody
         ? (
           <div className="corridor-local-three-d">
             <LocalPlanetThreeD
-              planet={localPlanet}
+              planet={localThreeDBody}
               moons={localPlanetMoons}
               epochLabel={epochLabel}
               corridorDefinition={definition}
               actualEntryDirection={actualEntryDirection}
-              exitDirection={exitDirection}
+              entryFlightDirection={entryFlightDirection}
+              exitRadialDirection={exitRadialDirection}
+              exitFlightDirection={exitFlightDirection}
+              passageNormalDirection={passageNormalDirection}
+              entrySourceName={entrySourceName}
+              exitTargetName={exitTargetName}
               passage={passage}
             />
             <p className="two-d-footnote">Aktiver Zielplanet · ziehen zum Drehen · Mausrad zum Zoomen.</p>

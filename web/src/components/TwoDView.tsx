@@ -15,16 +15,23 @@ import {
   buildTemporalCandidateGraph,
   constellationSearchBudget,
   constellationSearchWindow,
-  selectDiverseGraphCandidates,
+  selectAdaptiveLaunchWindowCandidates,
   selectTemporallyDiverseCandidates,
   temporalRefinementNeighbors,
 } from '../constellationGraph'
 import type { EntryCorridorDefinition } from '../entryCorridorGeometry'
 import { ROUTE_INTERSTELLAR_SYSTEMS } from '../interstellarTargets'
 import { DEFAULT_MISSION_CONFIG } from '../missionSimulation'
+import { sanitizeMoonCatalogue } from '../moonCatalogue'
 import { createOrbitPoints, planetPositionAt, toScenePosition } from '../orbitalMath'
 import {
+  directionBetweenRouteObjects,
+  interstellarTargetDirection,
+} from '../routeObjectDirections'
+import { projectPhysicsDirectionToView } from '../routeDirectionMath'
+import {
   MAX_PARTIAL_ORBIT_ANGLE_DEG,
+  normalizeRouteSections,
   type RouteBoundaryBehavior,
   type RouteSectionDefinition,
 } from '../routeSections'
@@ -59,6 +66,8 @@ interface TwoDViewProps {
     route: WaypointRouteResult,
   ) => void
   missionConfig: MissionConfig | null
+  solverDialogOnly?: boolean
+  onSolverDialogClose?: () => void
 }
 
 interface ConstellationSearchResult {
@@ -147,6 +156,23 @@ function adaptivePassageVariants(
     }
   })
   return variants
+}
+
+function formatRoutePathLabel(sections: RouteSectionDefinition[]) {
+  const chains: string[] = []
+  let currentChain: string[] = []
+  for (const section of sections) {
+    if (currentChain.length === 0) {
+      currentChain = [section.originId, section.targetId]
+    } else if (currentChain[currentChain.length - 1] === section.originId) {
+      currentChain.push(section.targetId)
+    } else {
+      chains.push(currentChain.join(' → '))
+      currentChain = [section.originId, section.targetId]
+    }
+  }
+  if (currentChain.length > 0) chains.push(currentChain.join(' → '))
+  return chains.join(' · ')
 }
 
 interface AiChatMessage {
@@ -332,24 +358,63 @@ function polarPoint(center: PreviewPoint, radius: number, angle: number): Previe
   }
 }
 
+function projectedCorridorPoint(
+  section: RouteSectionDefinition,
+  target: PreviewPoint,
+  projection: OrbitalProjection,
+) {
+  if (!section.corridor.enabled) return target
+  const direction = projectedPhysicsDirection(section.corridor.centerDirection, projection)
+  return direction
+    ? addPoint(target, scaleVector(direction, routePassageRadius(section.targetId)))
+    : target
+}
+
+function projectedPassageCorridors(
+  section: RouteSectionDefinition,
+  target: PreviewPoint,
+  projection: OrbitalProjection,
+) {
+  if (!section.corridor.enabled) return null
+  const direction = projectedPhysicsDirection(section.corridor.centerDirection, projection)
+  if (!direction) return null
+  const radius = routePassageRadius(section.targetId)
+  const entryAngle = Math.atan2(direction.y, direction.x)
+  const passageAngle = section.passage.mode === 'full-orbit'
+    ? 360
+    : section.passage.mode === 'partial-orbit'
+      ? section.passage.orbitAngleDeg
+      : 0
+  const directionSign = section.passage.orbitDirection === 'prograde' ? 1 : -1
+  const exitAngle = entryAngle + directionSign * passageAngle * Math.PI / 180
+  const halfAngleDeg = projection === 'top'
+    ? section.corridor.horizontalHalfAngleDeg
+    : section.corridor.verticalHalfAngleDeg
+  const halfAngle = halfAngleDeg * Math.PI / 180
+  return {
+    entryPoint: pointOnCircle(target, radius, entryAngle),
+    exitPoint: pointOnCircle(target, radius, exitAngle),
+    entryArc: sampledArcPath(target, radius, entryAngle - halfAngle, entryAngle + halfAngle),
+    exitArc: sampledArcPath(target, radius, exitAngle - halfAngle, exitAngle + halfAngle),
+  }
+}
+
 function routePassagePath(
   section: RouteSectionDefinition,
   origin: PreviewPoint,
   target: PreviewPoint,
   nextTarget: PreviewPoint | null,
+  nextSection: RouteSectionDefinition | null,
   projection: OrbitalProjection,
   approachCovered: boolean,
 ) {
   if (isInterstellarRouteObject(section.targetId)) return approachCovered ? '' : linePath(origin, target)
-  if (projection === 'top' && routeSectionUsesVerticalCorridor(section)) {
-    if (approachCovered) return nextTarget ? linePath(target, nextTarget) : ''
-    return nextTarget
-      ? `M ${origin.x.toFixed(3)} ${origin.y.toFixed(3)} L ${target.x.toFixed(3)} ${target.y.toFixed(3)} L ${nextTarget.x.toFixed(3)} ${nextTarget.y.toFixed(3)}`
-      : linePath(origin, target)
-  }
+  const linkedTarget = nextTarget && nextSection
+    ? projectedCorridorPoint(nextSection, nextTarget, projection)
+    : nextTarget
   if (projection === 'side' && routeSectionUsesVerticalCorridor(section)) {
     const sign = routeVerticalBias(section) >= 0 ? -1 : 1
-    const departure = nextTarget ?? {
+    const departure = linkedTarget ?? {
       x: target.x + (target.x - origin.x) / (Math.hypot(target.x - origin.x, target.y - origin.y) || 1) * 1.8,
       y: target.y + (target.y - origin.y) / (Math.hypot(target.x - origin.x, target.y - origin.y) || 1) * 1.8,
     }
@@ -374,35 +439,48 @@ function routePassagePath(
     return `${start} A ${radius.toFixed(3)} ${radius.toFixed(3)} 0 0 ${sweep} ${exit.x.toFixed(3)} ${exit.y.toFixed(3)} L ${departure.x.toFixed(3)} ${departure.y.toFixed(3)}`
   }
   if (projection === 'side') {
-    if (approachCovered) return nextTarget ? linePath(target, nextTarget) : ''
-    return nextTarget
-      ? `M ${origin.x.toFixed(3)} ${origin.y.toFixed(3)} L ${target.x.toFixed(3)} ${target.y.toFixed(3)} L ${nextTarget.x.toFixed(3)} ${nextTarget.y.toFixed(3)}`
+    if (approachCovered) return linkedTarget ? linePath(target, linkedTarget) : ''
+    return linkedTarget
+      ? `M ${origin.x.toFixed(3)} ${origin.y.toFixed(3)} L ${target.x.toFixed(3)} ${target.y.toFixed(3)} L ${linkedTarget.x.toFixed(3)} ${linkedTarget.y.toFixed(3)}`
       : linePath(origin, target)
   }
   const passage = section.passage
   const linkedExit = Boolean(nextTarget)
+  const configuredEntryDirection = section.corridor.enabled
+    ? projectedPhysicsDirection(section.corridor.centerDirection, projection)
+    : null
+  const radius = routePassageRadius(section.targetId)
   if (passage.mode === 'direct') {
-    if (approachCovered) return nextTarget ? linePath(target, nextTarget) : ''
-    return nextTarget
-      ? `M ${origin.x.toFixed(3)} ${origin.y.toFixed(3)} L ${target.x.toFixed(3)} ${target.y.toFixed(3)} L ${nextTarget.x.toFixed(3)} ${nextTarget.y.toFixed(3)}`
-      : linePath(origin, target)
+    const fallbackEntryDirection = normalizePreviewVector({
+      x: origin.x - target.x,
+      y: origin.y - target.y,
+    })
+    const entryDirection = configuredEntryDirection ?? fallbackEntryDirection
+    const entry = addPoint(target, scaleVector(entryDirection, radius))
+    const start = approachCovered
+      ? `M ${entry.x.toFixed(3)} ${entry.y.toFixed(3)}`
+      : `M ${origin.x.toFixed(3)} ${origin.y.toFixed(3)} L ${entry.x.toFixed(3)} ${entry.y.toFixed(3)}`
+    return linkedTarget
+      ? `${start} L ${linkedTarget.x.toFixed(3)} ${linkedTarget.y.toFixed(3)}`
+      : start
   }
 
-  const radius = routePassageRadius(section.targetId)
   const directionSign = passage.orbitDirection === 'prograde' ? 1 : -1
   const originAngle = vectorAngle(target, origin)
   const inboundDistance = Math.hypot(origin.x - target.x, origin.y - target.y)
   const entryTangentOffset = Math.acos(clamp(radius / Math.max(radius, inboundDistance), -1, 1))
-  const entryAngle = originAngle + directionSign * entryTangentOffset
+  const entryAngle = configuredEntryDirection
+    ? Math.atan2(configuredEntryDirection.y, configuredEntryDirection.x)
+    : originAngle + directionSign * entryTangentOffset
   const requestedAngle = passage.mode === 'full-orbit'
     ? Math.PI * 2
     : passage.mode === 'partial-orbit'
       ? clamp(passage.orbitAngleDeg, 1, MAX_PARTIAL_ORBIT_ANGLE_DEG) * Math.PI / 180
       : Math.PI / 2
   let selectedAngle = requestedAngle
-  if (nextTarget) {
-    const outboundAngle = vectorAngle(target, nextTarget)
-    const outboundDistance = Math.hypot(nextTarget.x - target.x, nextTarget.y - target.y)
+  if (linkedTarget) {
+    const outboundAngle = vectorAngle(target, linkedTarget)
+    const outboundDistance = Math.hypot(linkedTarget.x - target.x, linkedTarget.y - target.y)
     const tangentOffset = Math.acos(clamp(radius / Math.max(radius, outboundDistance), -1, 1))
     const tangentExitAngle = outboundAngle - directionSign * tangentOffset
     selectedAngle = positiveAngleDeg(
@@ -416,7 +494,7 @@ function routePassagePath(
   const arcSpan = Math.abs(selectedAngle)
   const largeArc = arcSpan > Math.PI ? 1 : 0
   const sweep = directionSign > 0 ? 1 : 0
-  const exitEnd = nextTarget ?? target
+  const exitEnd = linkedTarget ?? target
   const approachPath = approachCovered
     ? `M ${target.x.toFixed(3)} ${target.y.toFixed(3)} L ${entry.x.toFixed(3)} ${entry.y.toFixed(3)}`
     : `M ${origin.x.toFixed(3)} ${origin.y.toFixed(3)} L ${entry.x.toFixed(3)} ${entry.y.toFixed(3)}`
@@ -491,15 +569,13 @@ function projectedPhysicsDirection(
   projection: OrbitalProjection,
 ) {
   if (!direction) return null
-  const [x, y, z] = direction
-  const projected = { x, y: projection === 'top' ? -y : -z }
-  if (Math.hypot(projected.x, projected.y) <= 0.0001) return null
-  return normalizePreviewVector(projected)
+  const projected = projectPhysicsDirectionToView(direction, projection)
+  return projected ? { x: projected[0], y: projected[1] } : null
 }
 
 export function TwoDView({
   projectId,
-  routeSections,
+  routeSections: rawRouteSections,
   onRouteSectionsChange,
   activeRouteSectionId,
   onActiveRouteSectionChange,
@@ -507,7 +583,13 @@ export function TwoDView({
   plannedRoute,
   onApplyPlannedSolution,
   missionConfig,
+  solverDialogOnly = false,
+  onSolverDialogClose,
 }: TwoDViewProps) {
+  const routeSections = useMemo(
+    () => normalizeRouteSections(rawRouteSections),
+    [rawRouteSections],
+  )
   const [data, setData] = useState<SolarSystemData | null>(null)
   const [moonCatalogue, setMoonCatalogue] = useState<MoonCatalogue | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -524,6 +606,8 @@ export function TwoDView({
   const [routeCalculationDialogOpen, setRouteCalculationDialogOpen] = useState(false)
   const [calculationRunHistory, setCalculationRunHistory] = useState<RouteCalculationRunSummary[]>([])
   const [calculationHistoryLoading, setCalculationHistoryLoading] = useState(false)
+  const solverAutoStartedRef = useRef(false)
+  const searchCancelledRef = useRef(false)
   const [aiChatInput, setAiChatInput] = useState('')
   const [aiChatLoading, setAiChatLoading] = useState(false)
   const [aiChatError, setAiChatError] = useState('')
@@ -602,7 +686,7 @@ export function TwoDView({
       })
       .then(([solarData, moons]) => {
         setData(solarData)
-        setMoonCatalogue(moons)
+        setMoonCatalogue(sanitizeMoonCatalogue(moons))
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Solardaten konnten nicht geladen werden.')
@@ -658,6 +742,7 @@ export function TwoDView({
   }, [projectId])
 
   useEffect(() => () => {
+    searchCancelledRef.current = true
     aiRecordingStreamRef.current?.getTracks().forEach((track) => track.stop())
     aiPlaybackRef.current?.pause()
     if (aiPlaybackUrlRef.current) URL.revokeObjectURL(aiPlaybackUrlRef.current)
@@ -688,6 +773,56 @@ export function TwoDView({
   const calculatedActiveRouteSection = plannedRoute?.routeSections?.find(
     (section) => section.id === activeRouteSection?.id,
   ) ?? null
+  const activeRouteSectionIndex = activeRouteSection
+    ? routeSections.findIndex((section) => section.id === activeRouteSection.id)
+    : -1
+  const linkedNextRouteSection = activeRouteSectionIndex >= 0
+    && routeSections[activeRouteSectionIndex + 1]?.originId === activeRouteSection?.targetId
+    ? routeSections[activeRouteSectionIndex + 1]
+    : null
+  const calculatedNextRouteSection = linkedNextRouteSection
+    ? plannedRoute?.routeSections?.find((section) => section.id === linkedNextRouteSection.id) ?? null
+    : null
+  const entryFlightDirection = useMemo<Vector3Tuple | null>(() => {
+    if (!data || !activeRouteSection) return null
+    const targetTimestamp = timestampMs
+      + (calculatedActiveRouteSection?.entryDay ?? 0) * 86_400_000
+    return directionBetweenRouteObjects(
+      activeRouteSection.originId,
+      activeRouteSection.targetId,
+      timestampMs,
+      targetTimestamp,
+      data.planets,
+      moonCatalogue?.moons ?? [],
+    )
+  }, [activeRouteSection, calculatedActiveRouteSection?.entryDay, data, moonCatalogue, timestampMs])
+  const exitFlightDirection = useMemo<Vector3Tuple | null>(() => {
+    const solverDirection = calculatedActiveRouteSection?.corridor.exitAngleSelection?.desiredExitDirection
+      ?? calculatedNextRouteSection?.desiredDepartureDirection
+      ?? calculatedNextRouteSection?.predictedOutgoingDirection
+    if (solverDirection) return solverDirection
+    if (!data || !activeRouteSection || !linkedNextRouteSection) return null
+    const originTimestamp = timestampMs
+      + (calculatedActiveRouteSection?.exitDay ?? calculatedActiveRouteSection?.entryDay ?? 0) * 86_400_000
+    const targetTimestamp = timestampMs
+      + (calculatedNextRouteSection?.entryDay ?? calculatedActiveRouteSection?.exitDay ?? 0) * 86_400_000
+    return directionBetweenRouteObjects(
+      activeRouteSection.targetId,
+      linkedNextRouteSection.targetId,
+      originTimestamp,
+      targetTimestamp,
+      data.planets,
+      moonCatalogue?.moons ?? [],
+    )
+  }, [
+    activeRouteSection,
+    calculatedActiveRouteSection,
+    calculatedNextRouteSection,
+    data,
+    linkedNextRouteSection,
+    moonCatalogue,
+    timestampMs,
+  ])
   const sunToActiveTargetDirection = useMemo<Vector3Tuple | null>(() => {
     if (!data || !activeRouteSection || activeRouteSection.targetId === 'sun') return null
     if (isInterstellarRouteObject(activeRouteSection.targetId)) return null
@@ -1135,16 +1270,19 @@ export function TwoDView({
         origin,
         target,
         nextTarget,
+        nextSection ?? null,
         orbitalProjection,
         approachCovered,
       )
       if (!path) return null
+      const passageCorridors = projectedPassageCorridors(section, target, orbitalProjection)
       return {
         id: section.id,
         index,
         path,
         origin,
         target,
+        passageCorridors,
         targetName: routeObjectName(section.targetId, data.planets, moonCatalogue?.moons ?? []),
         hasPassageArc: section.passage.mode !== 'direct',
         outOfPlane: routeSectionUsesVerticalCorridor(section) || section.passage.orbitAngleDeg > 360,
@@ -1277,6 +1415,7 @@ export function TwoDView({
       setConstellationSearchStatus('Keine Route vorhanden.')
       return
     }
+    searchCancelledRef.current = false
     searchRunningRef.current = true
     setConstellationSearchRunning(true)
     let activeMLRanker: MLCandidateRanker | null = null
@@ -1347,14 +1486,165 @@ export function TwoDView({
     } = constellationSearchWindow(involvedPlanetPeriods, routeSections.length)
     const searchStartTimestamp = base + searchStartDay * 86_400_000
     const searchEndTimestamp = base + searchEndDay * 86_400_000
+    const directBodySection = routeSections.length === 1 ? routeSections[0] : null
+    const directOrigin = directBodySection
+      ? data.planets.find((planet) => planet.id === directBodySection.originId)
+      : undefined
+    const directTarget = directBodySection
+      ? data.planets.find((planet) => planet.id === directBodySection.targetId)
+      : undefined
+    const directPlanetSections = routeSections.filter((section) => {
+      const origin = data.planets.find((planet) => planet.id === section.originId)
+      const target = data.planets.find((planet) => planet.id === section.targetId)
+      return Boolean(origin && target && origin.id !== target.id)
+    })
+    const allDirectPlanetSections = (
+      routeSections.length > 0
+      && directPlanetSections.length === routeSections.length
+    )
+    const lambertLaunchSeeds: Array<{
+      timestamp: number
+      arrivalDate: string
+      c3Km2S2: number
+      arrivalVInfinityKmS: number
+      score: number
+    }> = []
+    let directLambertConstraints: {
+      minFlightDays: number
+      maxFlightDays: number
+      arrivalStepDays: number
+      propagationYears: number
+    } | null = null
+    const hohmannFlightDaysForSection = (section: RouteSectionDefinition) => {
+      const origin = data.planets.find((planet) => planet.id === section.originId)
+      const target = data.planets.find((planet) => planet.id === section.targetId)
+      if (!origin || !target) return 260
+      const transferSemiMajorKm = (origin.distanceAu + target.distanceAu) * 149_597_870.7 / 2
+      return Math.PI * Math.sqrt(transferSemiMajorKm ** 3 / 1.32712440018e11) / 86_400
+    }
+    if (allDirectPlanetSections) {
+      const hohmannFlightDays = Math.max(
+        ...routeSections.map((section) => hohmannFlightDaysForSection(section)),
+      )
+      const departureSampleStepDays = Math.max(
+        broadStepDays,
+        Math.ceil((searchEndDay - searchStartDay) / 60),
+      )
+      const minFlightDays = Math.max(20, Math.floor(hohmannFlightDays * 0.55))
+      const maxFlightDays = Math.ceil(hohmannFlightDays * 1.8)
+      const arrivalSampleStepDays = Math.max(
+        5,
+        Math.ceil((maxFlightDays - minFlightDays) / 10),
+      )
+      directLambertConstraints = {
+        minFlightDays,
+        maxFlightDays,
+        arrivalStepDays: arrivalSampleStepDays,
+        propagationYears: Math.max(1, maxFlightDays / 365.25),
+      }
+    }
+    if (directOrigin && directTarget && directOrigin.id !== directTarget.id && directLambertConstraints) {
+      setConstellationSearchStatus(
+        `Lambert-Porkchop-Grobraster: ${directOrigin.name} → ${directTarget.name} …`,
+      )
+      try {
+        const lambertResponse = await fetch('/api/trajectory/plan', {
+          method: 'POST',
+          headers: activityRequestHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            start: {
+              type: 'body',
+              bodyId: directOrigin.id,
+              orbitAltitudeKm: missionConfig?.parkingOrbitAltitudeKm
+                ?? DEFAULT_MISSION_CONFIG.parkingOrbitAltitudeKm,
+              startDate: dateFromTimestamp(searchStartTimestamp),
+            },
+            target: {
+              type: 'body', bodyId: directTarget.id, arrivalMode: 'flyby',
+            },
+            waypoints: [],
+            searchWindow: {
+              departureStartDate: dateFromTimestamp(searchStartTimestamp),
+              departureEndDate: dateFromTimestamp(searchEndTimestamp),
+              departureStepDays: Math.max(
+                broadStepDays,
+                Math.ceil((searchEndDay - searchStartDay) / 60),
+              ),
+              arrivalStepDays: directLambertConstraints.arrivalStepDays,
+            },
+            constraints: {
+              minFlightDays: directLambertConstraints.minFlightDays,
+              maxFlightDays: directLambertConstraints.maxFlightDays,
+            },
+            optimizationMode: 'balanced',
+            simulation: {
+              sampleTrajectoryPoints: 36,
+              includeUncertainty: false,
+              includeAudit: false,
+              propagationYears: directLambertConstraints.propagationYears,
+            },
+          }),
+        })
+        const lambertPayload = await lambertResponse.json() as {
+          candidates?: Array<{
+            departureDate?: string
+            arrivalDate?: string
+            c3Km2S2?: number
+            arrivalVInfinityKmS?: number
+            score?: number
+          }>
+        }
+        if (lambertResponse.ok) {
+          const bestByDeparture = new Map<string, typeof lambertLaunchSeeds[number]>()
+          for (const candidate of lambertPayload.candidates ?? []) {
+            if (!candidate.departureDate || !candidate.arrivalDate) continue
+            const timestamp = new Date(`${candidate.departureDate}T00:00:00Z`).getTime()
+            if (!Number.isFinite(timestamp)) continue
+            const seed = {
+              timestamp,
+              arrivalDate: candidate.arrivalDate,
+              c3Km2S2: candidate.c3Km2S2 ?? Number.POSITIVE_INFINITY,
+              arrivalVInfinityKmS: candidate.arrivalVInfinityKmS ?? Number.POSITIVE_INFINITY,
+              score: candidate.score ?? Number.POSITIVE_INFINITY,
+            }
+            const current = bestByDeparture.get(candidate.departureDate)
+            if (!current || seed.score < current.score) {
+              bestByDeparture.set(candidate.departureDate, seed)
+            }
+          }
+          lambertLaunchSeeds.push(
+            ...[...bestByDeparture.values()].sort((left, right) => left.score - right.score),
+          )
+        }
+      } catch {
+        // The physical route solver remains available if this additional
+        // launch-window pre-search cannot be produced.
+      }
+    }
+    const lambertPriorityBoost = (timestamp: number) => {
+      if (lambertLaunchSeeds.length === 0) return 0
+      const finiteC3 = lambertLaunchSeeds
+        .map((seed) => seed.c3Km2S2)
+        .filter(Number.isFinite)
+      const c3Scale = Math.max(1, ...finiteC3)
+      return Math.max(0, ...lambertLaunchSeeds.map((seed, index) => {
+        const distanceDays = Math.abs(timestamp - seed.timestamp) / 86_400_000
+        const energyQuality = Number.isFinite(seed.c3Km2S2)
+          ? 1 - Math.min(1, seed.c3Km2S2 / c3Scale)
+          : 0
+        return 900 * energyQuality
+          + Math.max(0, 220 - index * 4)
+          - distanceDays * 2.5
+      }))
+    }
     const estimatedGeometricNodeCount = Math.max(
       1,
       Math.floor((searchEndDay - searchStartDay) / broadStepDays) + 1
         + aiSeedTimestamps.length
-        + aiWindowCenters.length,
+        + aiWindowCenters.length
+        + lambertLaunchSeeds.length,
     )
-    const {
-      geometricShortlistLimit,
+    let {
       preflightSolverBudget,
       fullValidationBudget,
     } = constellationSearchBudget(estimatedGeometricNodeCount, routeSections.length)
@@ -1378,7 +1668,8 @@ export function TwoDView({
       return {
         timestamp,
         ...result,
-        score: result.score - solarPenalty - timePenalty + aiPriorityBoost(timestamp),
+        score: result.score - solarPenalty - timePenalty
+          + aiPriorityBoost(timestamp) + lambertPriorityBoost(timestamp),
         sections: optimized.sections,
         solarChanges: optimized.changes,
         maxSolarOrbitAngleDeg: optimized.maxOrbitAngleDeg,
@@ -1389,9 +1680,7 @@ export function TwoDView({
       if (candidate) candidates.push(candidate)
       return candidate
     }
-    const routeLabel = routeSections
-      .map((section) => `${section.originId} → ${section.targetId}`)
-      .join(' · ')
+    const routeLabel = formatRoutePathLabel(routeSections)
     let searchRunId = ''
     try {
       const runResponse = await fetch('/api/calculations/runs', {
@@ -1400,7 +1689,7 @@ export function TwoDView({
         body: JSON.stringify({
           projectId,
           runType: 'constellation-search',
-          solverName: 'temporal-weighted-best-first',
+          solverName: 'adaptive-porkchop-lambert-best-first',
           routeLabel,
           baseDate: dateFromTimestamp(base),
           searchStartDate: dateFromTimestamp(base + searchStartDay * 86_400_000),
@@ -1466,8 +1755,25 @@ export function TwoDView({
       goodResultCount: 0,
       targetGoodResults: TARGET_GOOD_CONSTELLATION_RESULTS,
       adaptiveRound: 0,
+      progressPercent: 0,
+      progressMessage: 'Suchgraph wird aufgebaut …',
     })
     setRouteCalculationDialogOpen(true)
+    const updateSearchProgress = (progressPercent: number, progressMessage: string) => {
+      setConstellationSearchStatus(progressMessage)
+      setRouteCalculationTrace((current) => (
+        current?.runId === searchRunId
+          ? {
+              ...current,
+              progressPercent: Math.max(
+                current.progressPercent ?? 0,
+                Math.min(99, Math.round(progressPercent)),
+              ),
+              progressMessage,
+            }
+          : current
+      ))
+    }
     const updateCalculationCandidate = (candidateTrace: RouteCalculationCandidateTrace) => {
       setRouteCalculationTrace((current) => {
         if (!current || current.runId !== searchRunId) return current
@@ -1550,24 +1856,41 @@ export function TwoDView({
         searchStartDay,
         searchEndDay,
         longestRelevantPeriodDays,
-        graphAlgorithm: 'temporal-weighted-best-first',
+        graphAlgorithm: 'adaptive-porkchop-lambert-best-first',
         aiCalculationSuggestionId: aiCalculationBiasActive ? aiCalculationSuggestion?.suggestionId ?? '' : '',
         aiSeedCount: aiSeedTimestamps.length,
+        lambertLaunchWindowCount: lambertLaunchSeeds.length,
       },
     })
     try {
       for (const seed of [...aiSeedTimestamps, ...aiWindowCenters]) {
         evaluate(seed.timestamp)
       }
+      for (const seed of lambertLaunchSeeds) evaluate(seed.timestamp)
       for (let day = searchStartDay; day <= searchEndDay; day += broadStepDays) {
         evaluate(base + day * 86_400_000)
       }
       const candidateGraph = buildTemporalCandidateGraph(candidates)
-      const geometricShortlist = selectDiverseGraphCandidates(
+      const completeCoverageMode = true
+      const adaptiveLaunchWindows = selectAdaptiveLaunchWindowCandidates(
         candidateGraph,
-        geometricShortlistLimit,
         Math.max(90, Math.min(730, longestRelevantPeriodDays / 8)),
+        routeSections.length,
       )
+      const geometricShortlist = completeCoverageMode
+        ? candidateGraph.nodes
+        : adaptiveLaunchWindows.candidates
+      const adaptiveBudgets = constellationSearchBudget(
+        candidateGraph.nodes.length,
+        routeSections.length,
+        geometricShortlist.length,
+      )
+      preflightSolverBudget = completeCoverageMode
+        ? candidateGraph.nodes.length
+        : adaptiveBudgets.preflightSolverBudget
+      fullValidationBudget = completeCoverageMode
+        ? candidateGraph.nodes.length
+        : adaptiveBudgets.fullValidationBudget
       const graphEdges = [...candidateGraph.neighbors.values()]
         .reduce((sum, edges) => sum + edges.length, 0) / 2
       const shortlistedTimestamps = new Set(
@@ -1597,10 +1920,13 @@ export function TwoDView({
             }
           : current
       ))
+      updateSearchProgress(10, 'Suchgraph erstellt · dynamische Vorprüfung startet …')
       await persistRunUpdate({
         graphNodes: candidateGraph.nodes.length,
         graphEdges,
         shortlistCount: geometricShortlist.length,
+        preflightBudget: preflightSolverBudget,
+        fullValidationBudget,
         geometryPoints,
       })
       logActivity({
@@ -1611,12 +1937,19 @@ export function TwoDView({
           nodes: candidateGraph.nodes.length,
           edges: graphEdges,
           shortlistNodes: geometricShortlist.length,
+          localLaunchWindowPeaks: adaptiveLaunchWindows.localPeakCount,
+          qualifiedLaunchWindowNodes: adaptiveLaunchWindows.qualifiedNodeCount,
+          adaptiveQualityFloor: adaptiveLaunchWindows.qualityFloor,
+          adaptiveCoverageTarget: adaptiveLaunchWindows.coverageTarget,
+          coverageMode: completeCoverageMode ? 'complete-grid' : 'adaptive-shortlist',
           searchStartDate: dateFromTimestamp(base + searchStartDay * 86_400_000),
           searchEndDate: dateFromTimestamp(base + searchEndDay * 86_400_000),
         },
         details: {
           searchRunId,
-          algorithm: 'weighted-temporal-graph+dijkstra+best-first-refinement',
+          algorithm: completeCoverageMode
+            ? 'complete-launch-grid+lambert-best-first-ordering'
+            : 'adaptive-launch-window-landscape+lambert-best-first-refinement',
         },
       })
       if (geometricShortlist.length === 0) {
@@ -1650,6 +1983,7 @@ export function TwoDView({
         stage: string,
         iteration: number,
       ): Promise<SolvedCandidate | null> => {
+        if (searchCancelledRef.current) return null
         const startDate = dateFromTimestamp(candidate.timestamp)
         const candidateTraceId = `pending:${searchRunId}:${iteration}`
         const runningTrace: RouteCalculationCandidateTrace = {
@@ -1677,6 +2011,16 @@ export function TwoDView({
           method: 'POST',
           headers: activityRequestHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
+            preferLambertBodyToBody: Boolean(
+              directLambertConstraints
+              && allDirectPlanetSections
+              && solverSections.length === routeSections.length
+              && solverSections.every((section, sectionIndex) => (
+                section.originId === routeSections[sectionIndex]?.originId
+                && section.targetId === routeSections[sectionIndex]?.targetId
+              ))
+            ),
+            lambertConstraints: directLambertConstraints ?? undefined,
             mission: { ...(missionConfig ?? DEFAULT_MISSION_CONFIG), startDate },
             waypointId: solverSections[0]?.targetId ?? 'earth',
             flybyAltitudeKm: 100_000,
@@ -1702,6 +2046,7 @@ export function TwoDView({
           error?: string
           calculationVariantId?: string
         }
+        if (searchCancelledRef.current) return null
         if (!response.ok || 'error' in payload) {
           const message = 'error' in payload && payload.error ? payload.error : `HTTP ${response.status}`
           const structural = /keine lokale Ephemeride|benötigt zuerst|kann nur der letzte|Mindestens ein 2D-Routenabschnitt|Endpunkt/.test(message)
@@ -1795,6 +2140,7 @@ export function TwoDView({
           status: geometry.valid ? 'success' : 'rejected',
           details: {
             searchRunId,
+            variantId: persistedVariantId,
             stage,
             rejectionKind: geometry.valid ? '' : 'geometry',
             geometryErrors: geometry.errors.join(' | '),
@@ -1806,10 +2152,25 @@ export function TwoDView({
             quality,
             geometryValid: geometry.valid,
             maximumEndpointResidualKm: geometry.maximumEndpointResidualKm,
+            requiredInjectionDeltaVKmS,
+            availableInjectionDeltaVKmS,
+            targetCorrectionDeltaVKmS,
+            corridorInsertionDeficitKmS,
+            deltaVDeficitKmS: Math.max(
+              0,
+              requiredInjectionDeltaVKmS
+                + targetCorrectionDeltaVKmS
+                - availableInjectionDeltaVKmS,
+            ) + corridorInsertionDeficitKmS,
             corridorSatisfied,
             collisionFree,
+            fullCorridorCheck,
             targetAlignmentDeg,
             mlPriorityScore,
+            annualPhaseSin: Math.sin(2 * Math.PI * (candidate.timestamp - Date.UTC(2000, 0, 1)) / (365.2425 * 86_400_000)),
+            annualPhaseCos: Math.cos(2 * Math.PI * (candidate.timestamp - Date.UTC(2000, 0, 1)) / (365.2425 * 86_400_000)),
+            jupiterPhaseSin: Math.sin(2 * Math.PI * (candidate.timestamp - Date.UTC(2000, 0, 1)) / (4_332.59 * 86_400_000)),
+            jupiterPhaseCos: Math.cos(2 * Math.PI * (candidate.timestamp - Date.UTC(2000, 0, 1)) / (4_332.59 * 86_400_000)),
           },
         })
         await persistVariantUpdate(persistedVariantId, {
@@ -1867,15 +2228,24 @@ export function TwoDView({
       const preflightCandidates: SolvedCandidate[] = []
       const solvedTimestamps = new Set<number>()
       let solverIteration = 0
-      for (let index = 0; index < geometricShortlist.length; index += 1) {
+      for (let index = 0; index < geometricShortlist.length && !searchCancelledRef.current; index += 1) {
         const candidate = geometricShortlist[index]
         const startDate = dateFromTimestamp(candidate.timestamp)
-        setConstellationSearchStatus(`Dynamische Vorprüfung ${index + 1}/${geometricShortlist.length}: ${new Date(`${startDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`)
+        updateSearchProgress(
+          10 + 40 * index / Math.max(1, geometricShortlist.length),
+          `Dynamische Vorprüfung ${index + 1}/${geometricShortlist.length}: ${new Date(`${startDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`,
+        )
         solverIteration += 1
         solvedTimestamps.add(candidate.timestamp)
         const solved = await solveCandidate(candidate, false, 'basin-preflight', solverIteration)
         if (solved) preflightCandidates.push(solved)
       }
+      updateSearchProgress(
+        50,
+        completeCoverageMode
+          ? 'Vollständige Vorprüfung abgeschlossen · Korridor-Vollprüfung startet …'
+          : 'Dynamische Vorprüfung abgeschlossen · Graph-Nachsuche …',
+      )
       const refinementSeeds = selectTemporallyDiverseCandidates(
         [...preflightCandidates].sort((left, right) => (
           right.mlPriorityScore - left.mlPriorityScore
@@ -1886,7 +2256,7 @@ export function TwoDView({
         Math.max(180, Math.min(730, longestRelevantPeriodDays / 10)),
       )
       const refinementFrontier = refinementSeeds.map((solved) => ({ solved, level: 0 }))
-      while (refinementFrontier.length > 0 && solverIteration < preflightSolverBudget) {
+      while (refinementFrontier.length > 0 && solverIteration < preflightSolverBudget && !searchCancelledRef.current) {
         const parent = refinementFrontier.shift()
         if (!parent || parent.level >= 4) continue
         const neighbors = temporalRefinementNeighbors(
@@ -1898,11 +2268,12 @@ export function TwoDView({
           .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
           .filter((candidate) => !solvedTimestamps.has(candidate.timestamp))
         const solvedNeighbors: SolvedCandidate[] = []
-        for (let index = 0; index < neighbors.length; index += 1) {
+        for (let index = 0; index < neighbors.length && !searchCancelledRef.current; index += 1) {
           if (solverIteration >= preflightSolverBudget) break
           const candidate = neighbors[index]
           const startDate = dateFromTimestamp(candidate.timestamp)
-          setConstellationSearchStatus(
+          updateSearchProgress(
+            50 + 15 * solverIteration / Math.max(1, preflightSolverBudget),
             `Graph-Nachsuche Ebene ${parent.level + 1} · ${index + 1}/${neighbors.length}: ${new Date(`${startDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`,
           )
           solverIteration += 1
@@ -1937,16 +2308,19 @@ export function TwoDView({
         180,
         Math.min(730, longestRelevantPeriodDays / 10),
       )
-      const fullValidationSeeds = selectTemporallyDiverseCandidates(
-        rankedPreflightCandidates,
-        (candidate) => candidate.candidate.timestamp,
-        fullValidationBudget,
-        fullValidationBasinSeparationDays,
-      )
+      const fullValidationSeeds = completeCoverageMode
+        ? rankedPreflightCandidates
+        : selectTemporallyDiverseCandidates(
+            rankedPreflightCandidates,
+            (candidate) => candidate.candidate.timestamp,
+            fullValidationBudget,
+            fullValidationBasinSeparationDays,
+          )
       // A corridor and passage are binding mission inputs.  Preflight runs
       // may rank dates, but must never replace the user's spatial aimpoint or
       // requested passage before authoritative full validation.
       const fullValidationShortlist = fullValidationSeeds
+      updateSearchProgress(65, 'Graph-Nachsuche abgeschlossen · Korridor-Vollprüfung …')
       const solvedCandidates: SolvedCandidate[] = []
       const solvedCandidateIsGood = (solved: SolvedCandidate) => (
         solved.route.summary.feasibleWithConfiguredBurn
@@ -1958,10 +2332,13 @@ export function TwoDView({
         )
       )
       let goodSolvedCandidateCount = 0
-      for (let index = 0; index < fullValidationShortlist.length; index += 1) {
+      for (let index = 0; index < fullValidationShortlist.length && !searchCancelledRef.current; index += 1) {
         const candidate = fullValidationShortlist[index].candidate
         const startDate = dateFromTimestamp(candidate.timestamp)
-        setConstellationSearchStatus(`Korridor-Vollprüfung ${index + 1}/${fullValidationShortlist.length}: ${new Date(`${startDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`)
+        updateSearchProgress(
+          65 + 20 * index / Math.max(1, fullValidationShortlist.length),
+          `Korridor-Vollprüfung ${index + 1}/${fullValidationShortlist.length}: ${new Date(`${startDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`,
+        )
         solverIteration += 1
         const solved = await solveCandidate(candidate, true, 'corridor-full-validation', solverIteration)
         if (solved) {
@@ -1976,9 +2353,10 @@ export function TwoDView({
                 }
               : current
           ))
-          if (goodSolvedCandidateCount >= TARGET_GOOD_CONSTELLATION_RESULTS) break
+          if (!completeCoverageMode && goodSolvedCandidateCount >= TARGET_GOOD_CONSTELLATION_RESULTS) break
         }
       }
+      updateSearchProgress(85, 'Korridor-Vollprüfung abgeschlossen · adaptive Passageprüfung …')
       const validatedSignatures = new Set(fullValidationShortlist.map(({ candidate }) => (
         `${candidate.timestamp}:${JSON.stringify(candidate.sections.map((section) => section.passage))}`
       )))
@@ -2000,9 +2378,13 @@ export function TwoDView({
       for (
         let adaptiveRound = 0;
         adaptiveRound < ADAPTIVE_PASSAGE_ANGLE_ROUNDS.length
-          && goodSolvedCandidateCount < TARGET_GOOD_CONSTELLATION_RESULTS;
+          && (
+            !completeCoverageMode
+            || goodSolvedCandidateCount < TARGET_GOOD_CONSTELLATION_RESULTS
+          );
         adaptiveRound += 1
       ) {
+        if (searchCancelledRef.current) break
         const adaptiveCandidates = adaptiveSeeds.flatMap((seed) => (
           adaptivePassageVariants(seed.sections, adaptiveRound)
             .map((sections) => ({ ...seed, sections }))
@@ -2027,11 +2409,14 @@ export function TwoDView({
             : current
         ))
         await persistRunUpdate({ fullValidationBudget: scheduledFullValidationCount })
-        for (let index = 0; index < adaptiveCandidates.length; index += 1) {
-          if (goodSolvedCandidateCount >= TARGET_GOOD_CONSTELLATION_RESULTS) break
+        for (let index = 0; index < adaptiveCandidates.length && !searchCancelledRef.current; index += 1) {
+          if (!completeCoverageMode && goodSolvedCandidateCount >= TARGET_GOOD_CONSTELLATION_RESULTS) break
           const candidate = adaptiveCandidates[index]
           const startDate = dateFromTimestamp(candidate.timestamp)
-          setConstellationSearchStatus(
+          updateSearchProgress(
+            85 + 14 * (
+              adaptiveRound + index / Math.max(1, adaptiveCandidates.length)
+            ) / Math.max(1, ADAPTIVE_PASSAGE_ANGLE_ROUNDS.length),
             `Adaptive Passagensuche R${adaptiveRound + 1} · ${index + 1}/${adaptiveCandidates.length}: ${new Date(`${startDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`,
           )
           solverIteration += 1
@@ -2056,6 +2441,7 @@ export function TwoDView({
           }
         }
       }
+      if (searchCancelledRef.current) return
       const rankedResults: ConstellationSearchResult[] = solvedCandidates
         .map((solved) => {
           const flightReady = (
@@ -2134,14 +2520,21 @@ export function TwoDView({
       const goodResultCount = rankedResults.filter((result) => result.good).length
       const flightReadyResultCount = rankedResults.filter((result) => result.flightReady).length
       const goodResultTargetReached = goodResultCount >= TARGET_GOOD_CONSTELLATION_RESULTS
-      const stopReason = goodResultTargetReached
-        ? `Ziel erreicht: ${goodResultCount} gute Resultate gefunden.`
-        : `Alle Zeit- und Passagevarianten ausgeschöpft: ${goodResultCount}/${TARGET_GOOD_CONSTELLATION_RESULTS} gute Resultate. Verbleibende harte Randbedingungen oder Δv-Grenzen verhindern weitere gültige Lösungen.`
+      const coverageCompletedSuccessfully = completeCoverageMode && goodResultCount > 0
+      const runCompletedSuccessfully = goodResultTargetReached || coverageCompletedSuccessfully
+      const stopReason = completeCoverageMode
+        ? (
+            goodResultCount > 0
+              ? `Suchraster vollständig geprüft: ${goodResultCount} gute Resultate gefunden.`
+              : `Suchraster vollständig geprüft: keine gute Lösung innerhalb der harten Randbedingungen gefunden.`
+          )
+        : (
+            goodResultTargetReached
+              ? `Ziel erreicht: ${goodResultCount} gute Resultate gefunden.`
+              : `Alle Zeit- und Passagevarianten ausgeschöpft: ${goodResultCount}/${TARGET_GOOD_CONSTELLATION_RESULTS} gute Resultate. Verbleibende harte Randbedingungen oder Δv-Grenzen verhindern weitere gültige Lösungen.`
+          )
       setConstellationResults(rankedResults)
       setSelectedConstellationResultId(bestResult.id)
-      if (bestResult.flightReady || bestResult.hypotheticalInterstellarAsymptote) {
-        onApplyPlannedSolution(bestDate, best.candidate.sections, best.route)
-      }
       const deltaVDeficitKmS = Math.max(
         0,
         best.requiredInjectionDeltaVKmS
@@ -2158,7 +2551,7 @@ export function TwoDView({
         await persistVariantUpdate(result.id, {
           status: result.flightReady ? 'performance-valid' : result.good ? 'success' : 'rejected',
           rank: index + 1,
-          selected: index === 0,
+          selected: false,
           feasible: result.flightReady,
           corridorSatisfied: result.corridorSatisfied,
           collisionFree: result.collisionFree,
@@ -2170,15 +2563,19 @@ export function TwoDView({
         updateCalculationPerformance(result)
       }))
       await persistRunUpdate({
-        status: goodResultTargetReached ? 'completed' : 'rejected',
+        status: runCompletedSuccessfully ? 'completed' : 'rejected',
         resultCount: rankedResults.length,
         flightReadyCount: flightReadyResultCount,
         bestVariantId: bestResult.id,
-        ...(goodResultTargetReached ? {} : { error: stopReason }),
+        ...(runCompletedSuccessfully ? {} : { error: stopReason }),
       })
-      const solutionLabel = goodResultTargetReached
-        ? `Adaptives Suchziel erreicht · ${goodResultCount} gute Resultate`
-        : `Suchraum ausgeschöpft · ${goodResultCount}/${TARGET_GOOD_CONSTELLATION_RESULTS} gute Resultate`
+      const solutionLabel = completeCoverageMode
+        ? `Suchraster vollständig geprüft · ${goodResultCount} gute Resultate`
+        : (
+            goodResultTargetReached
+              ? `Adaptives Suchziel erreicht · ${goodResultCount} gute Resultate`
+              : `Suchraum ausgeschöpft · ${goodResultCount}/${TARGET_GOOD_CONSTELLATION_RESULTS} gute Resultate`
+          )
       const solarPassageLabel = best.candidate.maxSolarOrbitAngleDeg >= 360 ? 'Sonnenumrundung' : 'Sonnenpassage'
       setConstellationSearchStatus(
         `${solutionLabel} ${new Date(`${bestDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })} - Start-Δv ${best.requiredInjectionDeltaVKmS.toFixed(2)} km/s - Zielkorrektur ${best.targetCorrectionDeltaVKmS.toFixed(2)} km/s - Zielrest ${best.targetAlignmentDeg.toFixed(1)}°${best.candidate.solarChanges > 0 ? ` - ${solarPassageLabel} ${best.candidate.maxSolarOrbitAngleDeg.toFixed(0)}°` : ''}${deltaVDeficitKmS > 0 ? ` - Δv-Defizit ${deltaVDeficitKmS.toFixed(2)} km/s` : ''}`,
@@ -2186,10 +2583,12 @@ export function TwoDView({
       logActivity({
         category: 'calculation',
         action: 'constellation-search-completed',
-        status: goodResultTargetReached ? 'success' : 'rejected',
+        status: runCompletedSuccessfully ? 'success' : 'rejected',
         details: {
           searchRunId,
-          resultKind: goodResultTargetReached ? 'good-result-target-reached' : 'search-space-exhausted',
+          resultKind: completeCoverageMode
+            ? 'complete-grid-evaluated'
+            : goodResultTargetReached ? 'good-result-target-reached' : 'search-space-exhausted',
         },
         values: {
           iterations: solverIteration,
@@ -2214,11 +2613,16 @@ export function TwoDView({
               goodResultCount,
               targetGoodResults: TARGET_GOOD_CONSTELLATION_RESULTS,
               stopReason,
+              progressPercent: 100,
+              progressMessage: stopReason,
             }
           : current
       ))
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Konstellationssuche fehlgeschlagen.'
+      const rawMessage = error instanceof Error ? error.message : 'Konstellationssuche fehlgeschlagen.'
+      const message = /failed to fetch/i.test(rawMessage)
+        ? 'Backend nicht erreichbar oder waehrend der Berechnung neu gestartet. Bitte Serverstatus pruefen und den Solverlauf erneut starten.'
+        : rawMessage
       setConstellationSearchStatus(message)
       setRouteCalculationTrace((current) => (
         current?.runId === searchRunId ? { ...current, error: message } : current
@@ -2238,6 +2642,13 @@ export function TwoDView({
         }
       }
     } finally {
+      if (searchCancelledRef.current && searchRunId) {
+        try {
+          await persistRunUpdate({ status: 'cancelled', error: 'Solverlauf vom Nutzer abgebrochen.' })
+        } catch {
+          // The closed dialog must stay closed if persisting cancellation fails.
+        }
+      }
       searchRunningRef.current = false
       setConstellationSearchRunning(false)
       setRouteCalculationTrace((current) => (
@@ -2271,8 +2682,24 @@ export function TwoDView({
     const result = constellationResults.find((item) => item.id === resultId)
     if (!result) return
     setSelectedConstellationResultId(result.id)
-    if (result.flightReady || result.hypotheticalInterstellarAsymptote) {
+    if (result.flightReady) {
+      const runId = result.route.calculationPersistence?.runId
+      if (runId) {
+        void fetch(
+          `/api/calculations/runs/${encodeURIComponent(runId)}/variants/${encodeURIComponent(result.id)}`,
+          {
+            method: 'PATCH',
+            headers: activityRequestHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ selected: true }),
+          },
+        ).catch((reason: unknown) => {
+          setConstellationSearchStatus(
+            `Auswahl konnte nicht gespeichert werden: ${reason instanceof Error ? reason.message : String(reason)}`,
+          )
+        })
+      }
       onApplyPlannedSolution(result.date, result.sections, result.route)
+      if (solverDialogOnly) onSolverDialogClose?.()
     }
     const deficitKmS = Math.max(
       0,
@@ -2283,9 +2710,7 @@ export function TwoDView({
     setConstellationSearchStatus(
       `${result.flightReady
         ? 'Flugfähige Lösung übernommen'
-        : result.hypotheticalInterstellarAsymptote
-          ? 'Hypothetische 50-AE-Zielrichtung dargestellt'
-          : 'Geometrisch gültige Diagnose · nicht übernommen'} `
+        : 'Geometrisch gültige Diagnose · nicht übernommen'} `
       + `${new Date(`${result.date}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`
       + ` · Δv-Defizit ${deficitKmS.toFixed(2)} km/s`
       + ` · Zielrest ${result.targetAlignmentDeg.toFixed(1)}°`,
@@ -2296,16 +2721,64 @@ export function TwoDView({
       status: result.flightReady ? 'success' : 'rejected',
       values: {
         date: result.date,
+        variantId: result.id,
+        feasible: result.flightReady,
+        flightReady: result.flightReady,
+        corridorSatisfied: result.corridorSatisfied,
+        collisionFree: result.collisionFree,
+        requiredInjectionDeltaVKmS: result.requiredInjectionDeltaVKmS,
+        availableInjectionDeltaVKmS: result.availableInjectionDeltaVKmS,
+        targetCorrectionDeltaVKmS: result.targetCorrectionDeltaVKmS,
+        corridorInsertionDeficitKmS: result.corridorInsertionDeficitKmS,
         quality: result.quality,
         deltaVDeficitKmS: deficitKmS,
         targetAlignmentDeg: result.targetAlignmentDeg,
       },
-      details: { resultId: result.id },
+      details: {
+        resultId: result.id,
+        searchRunId: result.route.calculationPersistence?.runId ?? '',
+        feedbackKind: 'user-selected-result',
+      },
     })
   }
 
-  if (error) return <div className="status-message">{error}</div>
-  if (!data) return <div className="status-message">2D-Orbitalplaner wird geladen …</div>
+  useEffect(() => {
+    if (!solverDialogOnly || !data || solverAutoStartedRef.current) return
+    solverAutoStartedRef.current = true
+    if (routeSections.length === 0) {
+      setConstellationSearchStatus('Bitte zuerst eine Route mit mindestens einem Abschnitt anlegen.')
+      return
+    }
+    void findBestConstellation()
+  }, [data, solverDialogOnly])
+
+  if (error) return solverDialogOnly
+    ? <div className="solver-route-launcher"><div>{error}<button type="button" onClick={onSolverDialogClose}>Schließen</button></div></div>
+    : <div className="status-message">{error}</div>
+  if (!data) return solverDialogOnly
+    ? <div className="solver-route-launcher"><div>Solver-Auswahl wird vorbereitet …</div></div>
+    : <div className="status-message">2D-Orbitalplaner wird geladen …</div>
+
+  if (solverDialogOnly) {
+    return (
+      <div className="solver-route-launcher">
+        {!routeCalculationDialogOpen || !routeCalculationTrace
+          ? <div>{constellationSearchStatus || 'Solver wird vorbereitet …'}</div>
+          : (
+            <RouteCalculationDialog
+              trace={routeCalculationTrace}
+              availableRuns={calculationRunHistory}
+              historyLoading={calculationHistoryLoading}
+              onRunSelect={(runId) => void loadPersistedCalculationRun(runId)}
+              onClose={() => onSolverDialogClose?.()}
+              selectionMode
+              selectableCandidateIds={constellationResults.filter((result) => result.flightReady).map((result) => result.id)}
+              onCandidateApply={applyConstellationResult}
+            />
+          )}
+      </div>
+    )
+  }
 
   const invalidateConstellationResults = () => {
     setConstellationResults([])
@@ -2624,7 +3097,11 @@ export function TwoDView({
               className="route-calculation-open-button"
               onClick={() => setRouteCalculationDialogOpen(true)}
             >
-              Analyse · {routeCalculationTrace.candidates.length}
+              {routeCalculationTrace.running
+                ? `Analyse · ${Math.round(routeCalculationTrace.progressPercent ?? 0)}%`
+                : routeCalculationTrace.error
+                  ? 'Analyse · Fehler'
+                  : `Analyse · fertig (${routeCalculationTrace.candidates.length})`}
             </button>
           )
           : null}
@@ -2671,7 +3148,7 @@ export function TwoDView({
               <input
                 type="range"
                 min="1"
-                max="3"
+                max="5"
                 step="0.1"
                 value={orbitZoom}
                 onChange={(event) => setOrbitZoom(event.target.valueAsNumber)}
@@ -2679,7 +3156,7 @@ export function TwoDView({
               <button
                 type="button"
                 aria-label="Zoom vergrößern"
-                onClick={() => setOrbitZoom((value) => Math.min(3, Number((value + 0.2).toFixed(1))))}
+                onClick={() => setOrbitZoom((value) => Math.min(5, Number((value + 0.2).toFixed(1))))}
               >
                 +
               </button>
@@ -2713,12 +3190,14 @@ export function TwoDView({
                   passage={activeRouteSection.passage}
                   sunToTargetDirection={sunToActiveTargetDirection}
                   actualEntryDirection={calculatedActiveRouteSection?.entryDirection ?? null}
-                  exitDirection={
-                    calculatedActiveRouteSection?.corridor.exitAngleSelection?.desiredExitDirection
-                      ?? calculatedActiveRouteSection?.desiredDepartureDirection
-                      ?? calculatedActiveRouteSection?.predictedOutgoingDirection
-                      ?? null
-                  }
+                  entryFlightDirection={entryFlightDirection}
+                  exitRadialDirection={calculatedActiveRouteSection?.corridor.exitAngleSelection?.desiredExitRadialDirection ?? null}
+                  exitFlightDirection={exitFlightDirection}
+                  passageNormalDirection={calculatedActiveRouteSection?.corridor.exitAngleSelection?.optimizedPassageNormal ?? null}
+                  entrySourceName={routeObjectName(activeRouteSection.originId, data.planets, moonCatalogue?.moons ?? [])}
+                  exitTargetName={linkedNextRouteSection
+                    ? routeObjectName(linkedNextRouteSection.targetId, data.planets, moonCatalogue?.moons ?? [])
+                    : null}
                   epochLabel={epochLabel}
                 />
               : (
@@ -2805,6 +3284,12 @@ export function TwoDView({
                     <g className="route-sketch-layer-2d">
                       {routeSketchSegments.map((segment) => (
                         <g key={`route-sketch-${segment.id}`}>
+                          {segment.passageCorridors && (
+                            <g className="route-sketch-corridors">
+                              <path d={segment.passageCorridors.entryArc} className="entry" />
+                              <path d={segment.passageCorridors.exitArc} className="exit" />
+                            </g>
+                          )}
                           <path
                             d={segment.path}
                             className={[
@@ -2815,6 +3300,22 @@ export function TwoDView({
                           />
                           <circle cx={segment.origin.x} cy={segment.origin.y} r=".16" className="route-sketch-node origin" />
                           <circle cx={segment.target.x} cy={segment.target.y} r=".18" className="route-sketch-node target" />
+                          {segment.passageCorridors && (
+                            <>
+                              <circle
+                                cx={segment.passageCorridors.entryPoint.x}
+                                cy={segment.passageCorridors.entryPoint.y}
+                                r=".11"
+                                className="route-sketch-corridor-point entry"
+                              />
+                              <circle
+                                cx={segment.passageCorridors.exitPoint.x}
+                                cy={segment.passageCorridors.exitPoint.y}
+                                r=".11"
+                                className="route-sketch-corridor-point exit"
+                              />
+                            </>
+                          )}
                         </g>
                       ))}
                     </g>
@@ -2909,7 +3410,13 @@ export function TwoDView({
                 />
               )}
             </div>
-            <p className="two-d-footnote">Kantenansicht: aktuelle Planetenpositionen gegen Ekliptikhöhe · Draufsicht: aktuelle Positionen auf realen J2000-Bahnen · beide synchron.</p>
+            {!plannedRoute && routeSketchSegments.some((segment) => segment.passageCorridors) && (
+              <div className="route-corridor-projection-legend" aria-label="Legende der projizierten Korridore">
+                <span className="entry">Eintrittskorridor</span>
+                <span className="exit">Austrittskorridor</span>
+              </div>
+            )}
+            <p className="two-d-footnote">Kantenansicht: aktuelle Planetenpositionen gegen Ekliptikhöhe · Draufsicht: aktuelle Positionen auf realen J2000-Bahnen · Korridorpassagen sind zur Lesbarkeit schematisch vergrößert.</p>
           </>
         )}
       {previewSection && (
@@ -2932,6 +3439,8 @@ export function TwoDView({
             historyLoading={calculationHistoryLoading}
             onRunSelect={(runId) => void loadPersistedCalculationRun(runId)}
             onClose={() => setRouteCalculationDialogOpen(false)}
+            selectableCandidateIds={constellationResults.filter((result) => result.flightReady).map((result) => result.id)}
+            onCandidateApply={applyConstellationResult}
           />
         )
         : null}
@@ -3045,17 +3554,9 @@ function previewRayEndpoint(origin: PreviewPoint, direction: PreviewPoint, margi
 }
 
 function interstellarPreviewDirection(targetId: string, projection: EntryCorridorDefinition['mainProjection']): PreviewPoint | null {
-  const target = ROUTE_INTERSTELLAR_SYSTEMS.find((item) => item.id === targetId)
-  if (!target) return null
-  const rightAscension = target.rightAscensionDeg * Math.PI / 180
-  const declination = target.declinationDeg * Math.PI / 180
-  const obliquity = 23.43928 * Math.PI / 180
-  const equatorialX = Math.cos(declination) * Math.cos(rightAscension)
-  const equatorialY = Math.cos(declination) * Math.sin(rightAscension)
-  const equatorialZ = Math.sin(declination)
-  const x = equatorialX
-  const y = equatorialY * Math.cos(obliquity) + equatorialZ * Math.sin(obliquity)
-  const z = -equatorialY * Math.sin(obliquity) + equatorialZ * Math.cos(obliquity)
+  const direction = interstellarTargetDirection(targetId)
+  if (!direction) return null
+  const [x, y, z] = direction
   return normalizePreviewVector({ x, y: (projection ?? 'side') === 'top' ? -y : -z })
 }
 

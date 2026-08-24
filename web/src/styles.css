@@ -193,6 +193,16 @@ button { font: inherit; }
 .route-sketch-node { stroke: #07101f; stroke-width: .06; }
 .route-sketch-node.origin { fill: #79e7ff; }
 .route-sketch-node.target { fill: #ffda67; }
+.route-sketch-corridors path { fill: none; stroke-width: .22; stroke-linecap: round; pointer-events: none; }
+.route-sketch-corridors .entry { stroke: #67dcff; filter: drop-shadow(0 0 .16px rgba(103,220,255,.88)); }
+.route-sketch-corridors .exit { stroke: #ff9f67; filter: drop-shadow(0 0 .16px rgba(255,159,103,.88)); }
+.route-sketch-corridor-point { stroke: #07101f; stroke-width: .05; pointer-events: none; }
+.route-sketch-corridor-point.entry { fill: #67dcff; }
+.route-sketch-corridor-point.exit { fill: #ff9f67; }
+.route-corridor-projection-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 7px 12px; color: #90aabd; font-size: .65rem; }
+.route-corridor-projection-legend span::before { content: ''; display: inline-block; width: 18px; height: 3px; margin: 0 7px 2px 0; border-radius: 999px; background: currentColor; }
+.route-corridor-projection-legend .entry { color: #67dcff; }
+.route-corridor-projection-legend .exit { color: #ff9f67; }
 .route-sketch-label-2d { display: none; }
 .interstellar-direction-marker text { fill: #ffe56d; font-size: .52px; font-weight: 700; paint-order: stroke; stroke: #031027; stroke-width: .12; pointer-events: none; }
 .interstellar-direction-marker line { stroke: #7dff9f; stroke-width: .13; stroke-dasharray: .45 .25; }
@@ -515,6 +525,18 @@ button { font: inherit; }
 .calculation-dialog-actions select { width: min(430px, 42vw); padding: 7px 27px 7px 9px; border: 1px solid rgba(181,133,255,.32); border-radius: 8px; color: #e9ddff; background: #0a1324; font-size: .63rem; }
 .route-calculation-content { display: grid; gap: 14px; overflow: auto; padding: 16px 20px 22px; }
 .calculation-funnel { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr) auto) minmax(0, 1fr); align-items: center; gap: 8px; }
+.calculation-progress { display: grid; gap: 8px; padding: 11px 13px; border: 1px solid rgba(139,232,255,.28); border-radius: 12px; background: rgba(45,198,232,.055); }
+.calculation-progress > div:first-child { display: flex; align-items: baseline; gap: 11px; }
+.calculation-progress strong { min-width: 42px; color: #8be8ff; font-size: .9rem; font-variant-numeric: tabular-nums; }
+.calculation-progress span { color: #a7becf; font-size: .68rem; }
+.calculation-progress-track { overflow: hidden; height: 8px; border-radius: 999px; background: rgba(255,255,255,.09); }
+.calculation-progress-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #35bddc, #8be8ff); box-shadow: 0 0 14px rgba(91,221,255,.42); transition: width .28s ease; }
+.calculation-progress.is-complete { border-color: rgba(112,255,156,.32); background: rgba(112,255,156,.055); }
+.calculation-progress.is-complete strong { color: #70ff9c; }
+.calculation-progress.is-complete .calculation-progress-track i { background: linear-gradient(90deg, #35c987, #70ff9c); }
+.calculation-progress.is-error { border-color: rgba(255,102,124,.38); background: rgba(255,69,98,.07); }
+.calculation-progress.is-error strong { color: #ff8fa0; }
+.calculation-progress.is-error .calculation-progress-track i { background: #ff657c; box-shadow: none; }
 .calculation-funnel > article { display: grid; place-items: center; min-height: 72px; padding: 9px; border: 1px solid rgba(181,133,255,.22); border-radius: 13px; background: rgba(139,92,246,.07); text-align: center; }
 .calculation-funnel > article.is-interactive { overflow: hidden; padding: 0; }
 .calculation-funnel > article.is-interactive button { display: grid; width: 100%; min-height: 70px; padding: 9px; place-items: center; border: 0; color: inherit; background: transparent; cursor: pointer; }
@@ -586,7 +608,19 @@ button { font: inherit; }
 .calculation-table-wrap { overflow: auto; max-height: 310px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; content-visibility: auto; }
 .calculation-table { width: 100%; border-collapse: collapse; font-size: .62rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .calculation-table th { position: sticky; top: 0; z-index: 1; padding: 8px 9px; color: #8199ae; background: #0b1525; text-align: left; }
+.calculation-table thead tr:nth-child(2) th { top: 31px; z-index: 2; padding-top: 0; background: #0b1525; }
+.calculation-table-filters input,
+.calculation-table-filters select,
+.calculation-table-filters button { width: 100%; min-width: 72px; box-sizing: border-box; padding: 5px 7px; border: 1px solid rgba(121,228,255,.18); border-radius: 6px; color: #d9f3ff; background: rgba(3,10,20,.92); font: inherit; }
+.calculation-table-filters input::placeholder { color: #627d91; }
+.calculation-table-filters button { color: #9beaff; cursor: pointer; font-weight: 800; }
+.calculation-table-filters button:hover,
+.calculation-table-filters button:focus-visible,
+.calculation-table-filters input:focus,
+.calculation-table-filters select:focus { border-color: #8be8ff; outline: none; }
+.calculation-range-filter { display: grid; grid-template-columns: minmax(56px, 1fr) minmax(56px, 1fr); gap: 4px; }
 .calculation-table td { padding: 7px 9px; border-top: 1px solid rgba(255,255,255,.055); color: #b9ccda; }
+.calculation-table-empty { padding: 18px 9px !important; color: #7f98ac !important; text-align: center; }
 .calculation-table tbody tr:hover,
 .calculation-table tbody tr.is-selected { background: rgba(139,92,246,.11); }
 .calculation-row-select { min-width: 28px; padding: 3px 5px; border: 1px solid rgba(181,133,255,.3); border-radius: 6px; color: #ddcaff; background: rgba(139,92,246,.08); cursor: pointer; font: inherit; }
@@ -595,6 +629,11 @@ button { font: inherit; }
 .route-calculation-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 20px; border-top: 1px solid rgba(255,255,255,.09); background: rgba(2,7,18,.8); }
 .route-calculation-dialog > footer p { margin: 0; color: #7991a6; font-size: .62rem; }
 .route-calculation-dialog > footer button { padding: 8px 13px; border: 1px solid #c9a8ff; border-radius: 8px; color: #0b1020; background: #c9a8ff; cursor: pointer; font-size: .68rem; font-weight: 800; }
+.route-calculation-dialog > footer button:disabled { cursor: not-allowed; opacity: .4; }
+.calculation-footer-actions { display: flex; gap: 8px; }
+.route-calculation-dialog > footer button.secondary { color: #c9a8ff; background: transparent; }
+.solver-route-launcher { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; background: rgba(0,3,10,.78); backdrop-filter: blur(7px); }
+.solver-route-launcher > div { padding: 18px 22px; border: 1px solid rgba(181,133,255,.42); border-radius: 14px; color: #e9ddff; background: #081121; box-shadow: 0 24px 80px rgba(0,0,0,.7); }
 
 .calculation-geometry-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; padding: 24px; place-items: center; background: rgba(0,3,10,.78); backdrop-filter: blur(7px); }
 .calculation-geometry-popup { display: grid; width: min(1040px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); overflow: auto; border: 1px solid rgba(121,228,255,.34); border-radius: 18px; color: #eaf8ff; background: #07101e; box-shadow: 0 28px 100px rgba(0,0,0,.78); }
@@ -1188,3 +1227,29 @@ button { font: inherit; }
   .wizard-route-preview { margin-top: 14px; padding: 14px; font-size: 1rem; }
   .route-section-wizard > footer { padding: 10px 16px; }
 }
+.trajectory-planner-panel { border: 1px solid rgba(121,228,255,.28); background: rgba(11,33,54,.45); }
+.trajectory-planner-panel > summary { color: #8be8ff; font-weight: 750; }
+.trajectory-planner-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; padding: 9px; }
+.trajectory-planner-grid label { display: grid; grid-template-columns: 1fr; gap: 3px; min-width: 0; color: #9eb5c7; font-size: .62rem; }
+.trajectory-planner-grid input,.trajectory-planner-grid select,.trajectory-waypoints input,.trajectory-waypoints select { min-width: 0; width: 100%; padding: 6px 7px; border: 1px solid rgba(255,255,255,.15); border-radius: 4px; color: #eaf8ff; background: #081525; }
+.trajectory-planner-grid label small { color: #6f91aa; }
+.trajectory-waypoints { padding: 0 9px 9px; }
+.trajectory-waypoints header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.trajectory-waypoints header button { padding: 5px 7px; }
+.trajectory-waypoints article { display: grid; grid-template-columns: 20px 1fr 1fr 80px 80px 25px; gap: 4px; align-items: center; margin-bottom: 4px; }
+.trajectory-aimpoint-fields { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; padding: 5px; border-left: 2px solid rgba(255,218,103,.35); }
+.trajectory-aimpoint-fields label { color: #d6c885; font-size: .59rem; }
+.trajectory-aimpoint-fields label:first-child { grid-column: 1 / -1; display: flex; gap: 5px; align-items: center; }
+.trajectory-aimpoint-fields input[type="checkbox"] { width: auto; }
+.trajectory-planner-actions { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 9px 9px; }
+.trajectory-planner-actions button,.trajectory-waypoints button { border: 1px solid rgba(121,228,255,.24); border-radius: 4px; color: #ccecf6; background: rgba(121,228,255,.07); cursor: pointer; }
+.trajectory-planner-actions button { padding: 6px 8px; }
+.trajectory-planner-actions button:disabled { opacity: .4; cursor: default; }
+.trajectory-planner-error { margin: 0 9px 9px; color: #ffafbd; font-size: .66rem; }
+.trajectory-planner-result { display: grid; gap: 4px; margin: 0 9px 9px; padding: 8px; border: 1px solid rgba(103,245,154,.24); color: #bdd4e2; background: rgba(103,245,154,.04); font-size: .64rem; }
+.trajectory-planner-result strong { color: #9ff8c7; }
+.trajectory-planner-result small { color: #ffe99b; }
+.trajectory-candidate-list { max-height: 220px; margin: 0 9px 9px; padding-left: 25px; overflow: auto; font-size: .61rem; }
+.trajectory-candidate-list li { padding: 4px; border-bottom: 1px solid rgba(255,255,255,.07); }
+.trajectory-candidate-list li span { display: block; }
+@media (max-width: 480px) { .trajectory-planner-grid { grid-template-columns: 1fr; } .trajectory-waypoints article { grid-template-columns: 20px 1fr 25px; } .trajectory-waypoints article > :not(span):not(button):nth-child(n+3) { grid-column: 2; } }

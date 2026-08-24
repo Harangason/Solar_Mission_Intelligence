@@ -6,6 +6,7 @@ import {
   constellationSearchWindow,
   dijkstraTemporalDistances,
   selectDiverseGraphCandidates,
+  selectAdaptiveLaunchWindowCandidates,
   selectTemporallyDiverseCandidates,
   temporalRefinementNeighbors,
 } from '../src/constellationGraph.ts'
@@ -68,5 +69,47 @@ assert.ok(smallBudget.geometricShortlistLimit >= 24)
 assert.ok(complexBudget.geometricShortlistLimit > smallBudget.geometricShortlistLimit)
 assert.ok(complexBudget.preflightSolverBudget > complexBudget.geometricShortlistLimit)
 assert.ok(complexBudget.fullValidationBudget >= 12)
+
+const adaptiveSharp = selectAdaptiveLaunchWindowCandidates(graph, 10, 1)
+assert.ok(adaptiveSharp.candidates.length > 0)
+assert.equal(adaptiveSharp.localPeakCount, 2)
+
+const flatGraph = buildTemporalCandidateGraph(Array.from({ length: 400 }, (_, index) => ({
+  timestamp: Date.UTC(2030, 0, 1) + index * 86_400_000,
+  score: 100 + Math.sin(index / 20) * 0.01,
+})))
+const adaptiveFlat = selectAdaptiveLaunchWindowCandidates(flatGraph, 10, 1)
+assert.ok(adaptiveFlat.candidates.length > adaptiveSharp.candidates.length)
+
+function formatRoutePathLabel(sections) {
+  const chains = []
+  let currentChain = []
+  for (const section of sections) {
+    if (currentChain.length === 0) {
+      currentChain = [section.originId, section.targetId]
+    } else if (currentChain[currentChain.length - 1] === section.originId) {
+      currentChain.push(section.targetId)
+    } else {
+      chains.push(currentChain.join(' → '))
+      currentChain = [section.originId, section.targetId]
+    }
+  }
+  if (currentChain.length > 0) chains.push(currentChain.join(' → '))
+  return chains.join(' · ')
+}
+assert.equal(
+  formatRoutePathLabel([
+    { originId: 'earth', targetId: 'mars' },
+    { originId: 'mars', targetId: 'earth' },
+  ]),
+  'earth → mars → earth',
+)
+assert.equal(
+  formatRoutePathLabel([
+    { originId: 'earth', targetId: 'mars' },
+    { originId: 'venus', targetId: 'jupiter' },
+  ]),
+  'earth → mars · venus → jupiter',
+)
 
 console.log('constellation graph consistency: ok')

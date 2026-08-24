@@ -10,6 +10,7 @@ import type {
   VisualConfig,
 } from '../types'
 import { PropulsionWizard } from './PropulsionWizard'
+import { TrajectoryPlannerPanel } from './TrajectoryPlannerPanel'
 
 interface NumberFieldProps {
   label: string
@@ -69,6 +70,7 @@ function Toggle({ label, checked, onChange }: ToggleProps) {
 
 interface ParameterPanelProps {
   planets: PlanetData[]
+  moons: MoonData[]
   moonCounts: Record<string, number>
   selectedPlanet: PlanetData | null
   selectedObject: string
@@ -86,10 +88,12 @@ interface ParameterPanelProps {
   onSelectMoon: (moon: MoonData) => void
   onVisualChange: (visual: VisualConfig) => void
   onDraftChange: (config: MissionConfig) => void
+  onApplyTrajectoryPlan: (result: import('../types').GenericTrajectoryPlannerResult) => void
 }
 
 export function ParameterPanel({
   planets,
+  moons,
   moonCounts,
   selectedPlanet,
   selectedObject,
@@ -107,6 +111,7 @@ export function ParameterPanel({
   onSelectMoon,
   onVisualChange,
   onDraftChange,
+  onApplyTrajectoryPlan,
 }: ParameterPanelProps) {
   const [moonSearch, setMoonSearch] = useState('')
   const [propulsionWizardOpen, setPropulsionWizardOpen] = useState(false)
@@ -162,6 +167,13 @@ export function ParameterPanel({
   return (
     <aside className="planet-panel parameter-panel" aria-label="Objekt- und Simulationsparameter">
       <p className="eyebrow">Objektdaten & Simulation</p>
+
+      <TrajectoryPlannerPanel
+        planets={planets}
+        moons={moons}
+        defaultStartDate={draft.startDate}
+        onApply={onApplyTrajectoryPlan}
+      />
 
       <details>
         <summary>Objekt</summary>

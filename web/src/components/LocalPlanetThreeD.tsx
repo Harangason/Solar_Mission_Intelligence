@@ -10,22 +10,59 @@ import {
   type EntryCorridorDefinition,
 } from '../entryCorridorGeometry'
 import { planetTextureUrl } from '../planetTextures'
+import { orthogonalizedScenePlaneNormal } from '../routeDirectionMath'
 import type { RouteBoundaryBehavior, RoutePassageDefinition, RoutePassageDirection } from '../routeSections'
-import type { MoonData, PlanetData } from '../types'
+import type { MoonData, PlanetData, SunData } from '../types'
 
 interface LocalPlanetThreeDProps {
-  planet: PlanetData
+  planet: LocalThreeDBody
   moons: MoonData[]
   epochLabel: string
   corridorDefinition: EntryCorridorDefinition
   actualEntryDirection?: CorridorTuple | null
-  exitDirection?: CorridorTuple | null
+  entryFlightDirection?: CorridorTuple | null
+  exitRadialDirection?: CorridorTuple | null
+  exitFlightDirection?: CorridorTuple | null
+  passageNormalDirection?: CorridorTuple | null
+  entrySourceName?: string | null
+  exitTargetName?: string | null
   passage: RoutePassageDefinition
+}
+
+type LocalThreeDBody = (PlanetData | SunData) & {
+  hasRings?: boolean
+  inclinationDeg?: number
 }
 
 const MAX_VISIBLE_MOONS = 18
 
-function PlanetBody({ planet }: { planet: PlanetData }) {
+function SunBody({ sun }: { sun: LocalThreeDBody }) {
+  const body = useRef<THREE.Mesh>(null)
+
+  useFrame((_, delta) => {
+    if (body.current) body.current.rotation.y += delta * 0.035
+  })
+
+  return (
+    <group>
+      <pointLight intensity={4.2} color={sun.color} distance={28} />
+      <mesh ref={body}>
+        <sphereGeometry args={[1.7, 80, 80]} />
+        <meshBasicMaterial color={sun.color} toneMapped={false} />
+      </mesh>
+      <mesh scale={1.18}>
+        <sphereGeometry args={[1.7, 48, 48]} />
+        <meshBasicMaterial color="#ffd978" transparent opacity={0.16} side={THREE.BackSide} toneMapped={false} />
+      </mesh>
+      <mesh scale={1.46}>
+        <sphereGeometry args={[1.7, 48, 48]} />
+        <meshBasicMaterial color="#ff8f4a" transparent opacity={0.07} side={THREE.BackSide} toneMapped={false} />
+      </mesh>
+    </group>
+  )
+}
+
+function TexturedPlanetBody({ planet }: { planet: LocalThreeDBody }) {
   const body = useRef<THREE.Mesh>(null)
   const texture = useTexture(planetTextureUrl(planet.id))
 
@@ -62,6 +99,12 @@ function PlanetBody({ planet }: { planet: PlanetData }) {
       )}
     </group>
   )
+}
+
+function PlanetBody({ planet }: { planet: LocalThreeDBody }) {
+  return planet.id === 'sun'
+    ? <SunBody sun={planet} />
+    : <TexturedPlanetBody planet={planet} />
 }
 
 function stableSeed(value: string) {
@@ -205,8 +248,12 @@ function CorridorEnvelope({ definition, anchor, velocity, phase, color, centerCo
       center.clone().addScaledVector(horizontal, halfHorizontal).addScaledVector(vertical, halfVertical),
       center.clone().addScaledVector(horizontal, halfHorizontal).addScaledVector(vertical, -halfVertical),
     ]
-    const startSection = section(start, broadHorizontal, broadVertical)
-    const endSection = section(end, narrowHorizontal, narrowVertical)
+    const startSection = phase === 'entry'
+      ? section(start, broadHorizontal, broadVertical)
+      : section(start, narrowHorizontal, narrowVertical)
+    const endSection = phase === 'entry'
+      ? section(end, narrowHorizontal, narrowVertical)
+      : section(end, broadHorizontal, broadVertical)
     return {
       sections: [
         [...startSection, startSection[0]],
@@ -241,22 +288,67 @@ function CorridorEnvelope({ definition, anchor, velocity, phase, color, centerCo
   )
 }
 
-function passageFrame(entryDirection: CorridorTuple, orbitDirection: RoutePassageDirection) {
+function passageFrame(
+  entryDirection: CorridorTuple,
+  orbitDirection: RoutePassageDirection,
+  passageNormalDirection: CorridorTuple | null = null,
+) {
   const radial = physicsToScene(new THREE.Vector3(...entryDirection).normalize())
-  const reference = Math.abs(radial.y) < 0.88
-    ? new THREE.Vector3(0, 1, 0)
-    : new THREE.Vector3(1, 0, 0)
-  const normal = reference.cross(radial).normalize()
+  let reference = passageNormalDirection
+    ? physicsToScene(new THREE.Vector3(...passageNormalDirection).normalize())
+    : Math.abs(radial.y) < 0.88
+      ? new THREE.Vector3(0, 1, 0)
+      : new THREE.Vector3(0, 0, 1)
+  // Keep the passage plane as close as possible to the supplied solver plane
+  // (or to the ecliptic). Crossing reference × radial here rotated the visual
+  // orbit plane by 90 degrees.
+  let normalTuple = orthogonalizedScenePlaneNormal(
+    [radial.x, radial.y, radial.z],
+    [reference.x, reference.y, reference.z],
+  )
+  if (!normalTuple) {
+    reference = Math.abs(radial.y) < 0.88
+      ? new THREE.Vector3(0, 1, 0)
+      : new THREE.Vector3(0, 0, 1)
+    normalTuple = orthogonalizedScenePlaneNormal(
+      [radial.x, radial.y, radial.z],
+      [reference.x, reference.y, reference.z],
+    )
+  }
+  const normal = new THREE.Vector3(...(normalTuple ?? [0, 1, 0]))
   if (orbitDirection === 'retrograde') normal.negate()
   const tangent = normal.clone().cross(radial).normalize()
   return { radial, normal, tangent }
 }
 
-function fallbackPassageExitDirection(entryDirection: CorridorTuple, passage: RoutePassageDefinition) {
+function targetCoupledPassageNormal(
+  entryDirection: CorridorTuple,
+  exitFlightDirection: CorridorTuple | null,
+  passageNormalDirection: CorridorTuple | null,
+) {
+  if (passageNormalDirection) return passageNormalDirection
+  if (!exitFlightDirection) return null
+  const entry = new THREE.Vector3(...entryDirection).normalize()
+  const exit = new THREE.Vector3(...exitFlightDirection).normalize()
+  const normal = entry.cross(exit)
+  return normal.lengthSq() > 1e-10
+    ? [normal.x, normal.y, normal.z] as CorridorTuple
+    : null
+}
+
+function fallbackPassageExitDirection(
+  entryDirection: CorridorTuple,
+  passage: RoutePassageDefinition,
+  passageNormalDirection: CorridorTuple | null,
+) {
   if (passage.mode === 'direct') {
     return [...entryDirection] as CorridorTuple
   }
-  const { radial, normal } = passageFrame(entryDirection, passage.orbitDirection)
+  const { radial, normal } = passageFrame(
+    entryDirection,
+    passage.orbitDirection,
+    passageNormalDirection,
+  )
   const angleDeg = passage.mode === 'full-orbit' ? 360 : passage.orbitAngleDeg
   return sceneToPhysics(radial.applyAxisAngle(normal, THREE.MathUtils.degToRad(angleDeg)))
 }
@@ -301,11 +393,18 @@ function PassageTrajectory({ geometry }: PassageTrajectoryProps) {
 
 function createPassageGeometry(
   entryDirection: CorridorTuple,
-  exitDirection: CorridorTuple,
+  exitRadialDirection: CorridorTuple,
+  entryFlightDirection: CorridorTuple | null,
+  exitFlightDirection: CorridorTuple | null,
+  passageNormalDirection: CorridorTuple | null,
   passage: RoutePassageDefinition,
 ) {
   const orbitRadius = passage.mode === 'direct' ? 2.28 : 2.16
-  const { radial: entryRadial, normal, tangent: entryTangent } = passageFrame(entryDirection, passage.orbitDirection)
+  const { radial: entryRadial, normal, tangent: entryTangent } = passageFrame(
+    entryDirection,
+    passage.orbitDirection,
+    passageNormalDirection,
+  )
   const entryPoint = entryRadial.clone().multiplyScalar(orbitRadius)
   const angleDeg = passage.mode === 'full-orbit'
     ? 360
@@ -322,15 +421,19 @@ function createPassageGeometry(
       ))
   const exitRadial = passage.mode === 'direct'
     ? entryRadial.clone()
-    : physicsToScene(new THREE.Vector3(...exitDirection).normalize())
+    : physicsToScene(new THREE.Vector3(...exitRadialDirection).normalize())
   const exitPoint = exitRadial.clone().multiplyScalar(orbitRadius)
   const exitTangent = normal.clone().cross(exitRadial).normalize()
-  const entryVelocity = passage.mode === 'direct' && passage.entryBehavior === 'ballistic'
-    ? entryTangent.clone()
-    : boundaryVelocity(passage.entryBehavior, entryRadial, entryTangent, false)
-  const exitVelocity = passage.mode === 'direct' && passage.exitBehavior === 'ballistic'
-    ? entryTangent.clone()
-    : boundaryVelocity(passage.exitBehavior, exitRadial, exitTangent, true)
+  const entryVelocity = entryFlightDirection
+    ? physicsToScene(new THREE.Vector3(...entryFlightDirection).normalize())
+    : passage.mode === 'direct' && passage.entryBehavior === 'ballistic'
+      ? entryTangent.clone()
+      : boundaryVelocity(passage.entryBehavior, entryRadial, entryTangent, false)
+  const exitVelocity = exitFlightDirection
+    ? physicsToScene(new THREE.Vector3(...exitFlightDirection).normalize())
+    : passage.mode === 'direct' && passage.exitBehavior === 'ballistic'
+      ? entryTangent.clone()
+      : boundaryVelocity(passage.exitBehavior, exitRadial, exitTangent, true)
   const entryVector = [entryPoint.clone().addScaledVector(entryVelocity, -2.15), entryPoint]
   const exitVector = [exitPoint, exitPoint.clone().addScaledVector(exitVelocity, 2.15)]
   const safetyBoundary = passage.mode === 'direct'
@@ -358,21 +461,49 @@ function LocalPlanetScene({
   moons,
   corridorDefinition,
   actualEntryDirection = null,
-  exitDirection = null,
+  entryFlightDirection = null,
+  exitRadialDirection = null,
+  exitFlightDirection = null,
+  passageNormalDirection = null,
   passage,
 }: Omit<LocalPlanetThreeDProps, 'epochLabel'>) {
   const selectedEntryDirection = actualEntryDirection ?? corridorDefinition.centerDirection
-  const fallbackExitDirection = fallbackPassageExitDirection(selectedEntryDirection, passage)
-  const selectedExitDirection = exitDirection ?? fallbackExitDirection
+  const selectedPassageNormal = targetCoupledPassageNormal(
+    selectedEntryDirection,
+    exitFlightDirection,
+    passageNormalDirection,
+  )
+  const fallbackExitDirection = fallbackPassageExitDirection(
+    selectedEntryDirection,
+    passage,
+    selectedPassageNormal,
+  )
+  const selectedExitRadialDirection = exitRadialDirection ?? fallbackExitDirection
   const passageGeometry = useMemo(
-    () => createPassageGeometry(selectedEntryDirection, selectedExitDirection, passage),
+    () => createPassageGeometry(
+      selectedEntryDirection,
+      selectedExitRadialDirection,
+      entryFlightDirection,
+      exitFlightDirection,
+      selectedPassageNormal,
+      passage,
+    ),
     [
       selectedEntryDirection[0],
       selectedEntryDirection[1],
       selectedEntryDirection[2],
-      selectedExitDirection[0],
-      selectedExitDirection[1],
-      selectedExitDirection[2],
+      selectedExitRadialDirection[0],
+      selectedExitRadialDirection[1],
+      selectedExitRadialDirection[2],
+      entryFlightDirection?.[0],
+      entryFlightDirection?.[1],
+      entryFlightDirection?.[2],
+      exitFlightDirection?.[0],
+      exitFlightDirection?.[1],
+      exitFlightDirection?.[2],
+      selectedPassageNormal?.[0],
+      selectedPassageNormal?.[1],
+      selectedPassageNormal?.[2],
       passage.entryBehavior,
       passage.exitBehavior,
       passage.mode,
@@ -418,7 +549,12 @@ export function LocalPlanetThreeD({
   epochLabel,
   corridorDefinition,
   actualEntryDirection = null,
-  exitDirection = null,
+  entryFlightDirection = null,
+  exitRadialDirection = null,
+  exitFlightDirection = null,
+  passageNormalDirection = null,
+  entrySourceName = null,
+  exitTargetName = null,
   passage,
 }: LocalPlanetThreeDProps) {
   const representedMoons = Math.min(
@@ -441,14 +577,17 @@ export function LocalPlanetThreeD({
             moons={moons}
             corridorDefinition={corridorDefinition}
             actualEntryDirection={actualEntryDirection}
-            exitDirection={exitDirection}
+            entryFlightDirection={entryFlightDirection}
+            exitRadialDirection={exitRadialDirection}
+            exitFlightDirection={exitFlightDirection}
+            passageNormalDirection={passageNormalDirection}
             passage={passage}
           />
         </Canvas>
       </div>
       <footer className="local-three-d-legend" aria-label="Legende der lokalen 3D-Ansicht">
-        <span className="entry">Zielkorridor / Eintritt</span>
-        <span className="exit">Austrittskorridor</span>
+        <span className="entry">Eintritt{entrySourceName ? ` · von ${entrySourceName}` : ''}</span>
+        <span className="exit">Austritt{exitTargetName ? ` · nach ${exitTargetName}` : ' · kein Folgeziel'}</span>
         <span className="entry-vector">Eintrittsvektor · {passage.entryBehavior}</span>
         <span className="passage">{passage.mode === 'full-orbit' ? 'Volle Umrundung · 360°' : passage.mode === 'partial-orbit' ? `Teilumrundung · ${passage.orbitAngleDeg}°` : 'Direkter Vorbeiflug · ungebunden'}</span>
         {passage.mode === 'direct' && <span className="safe">Sicherheitsgrenze · keine Einfangbahn</span>}

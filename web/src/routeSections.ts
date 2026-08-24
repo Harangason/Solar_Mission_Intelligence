@@ -62,3 +62,42 @@ export function routePassage(section: RouteSectionDefinition): RoutePassageDefin
     ...section.passage,
   }
 }
+
+export function normalizeRouteSection(
+  section: Partial<RouteSectionDefinition> | null | undefined,
+  index = 0,
+): RouteSectionDefinition {
+  const normalizedPassage: RoutePassageDefinition = {
+    ...DEFAULT_ROUTE_PASSAGE,
+    ...(section?.passage ?? {}),
+  }
+
+  const normalizedCorridor = section?.corridor
+    ? { ...DEFAULT_ENTRY_CORRIDOR, ...section.corridor }
+    : { ...DEFAULT_ENTRY_CORRIDOR, enabled: true }
+
+  const deltaVMinusKmS = Number.isFinite(section?.deltaVMinusKmS)
+    ? Number(section?.deltaVMinusKmS)
+    : DEFAULT_ROUTE_SECTION.deltaVMinusKmS
+  const deltaVPlusKmS = Number.isFinite(section?.deltaVPlusKmS)
+    ? Number(section?.deltaVPlusKmS)
+    : DEFAULT_ROUTE_SECTION.deltaVPlusKmS
+
+  return {
+    ...DEFAULT_ROUTE_SECTION,
+    ...section,
+    id: section?.id ?? `route-section-${index + 1}`,
+    originId: section?.originId ?? 'sun',
+    targetId: section?.targetId ?? 'earth',
+    corridor: normalizedCorridor,
+    passage: normalizedPassage,
+    deltaVMinusKmS,
+    deltaVPlusKmS,
+  }
+}
+
+export function normalizeRouteSections(
+  sections: Array<Partial<RouteSectionDefinition> | null | undefined>,
+): RouteSectionDefinition[] {
+  return sections.map((section, index) => normalizeRouteSection(section, index))
+}

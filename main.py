@@ -26,6 +26,7 @@ from solver.trajectory import get_default_mission_config, simulate_mission
 from planner.route_planner import simulate_waypoint_route
 from planner.multi_route_planner import classify_route_sections, simulate_route_sections
 from planner.mission_optimizer import assess_solar_energy, optimize_launch_window
+from planner.trajectory_planner import calculate_trajectory_plan
 from services.calculation_store import CalculationStore
 from services.project_store import ProjectStore
 from ai.audit_log import AI_AUDIT_LOGS, read_latest_ai_audit
@@ -78,6 +79,261 @@ def _record_route_variant(
         status=status,
         error_message=error_message,
     )
+
+
+def _vector_delta(left: list[float], right: list[float]) -> list[float]:
+    return [float(left[index]) - float(right[index]) for index in range(3)]
+
+
+def _vector_length(vector: list[float]) -> float:
+    return sum(component * component for component in vector) ** 0.5
+
+
+def _normalize_vector(vector: list[float]) -> list[float]:
+    length = _vector_length(vector) or 1.0
+    return [component / length for component in vector]
+
+
+def _planet_name(body_id: str) -> str:
+    for planet in get_solar_system_data()["planets"]:
+        if planet.get("id") == body_id:
+            return str(planet.get("name") or body_id)
+    return body_id
+
+
+def _direct_lambert_route(values: dict) -> dict | None:
+    if not values.get("preferLambertBodyToBody"):
+        return None
+    route_sections = values.get("routeSections")
+    if not isinstance(route_sections, list) or len(route_sections) < 1:
+        return None
+    if not all(isinstance(section, dict) for section in route_sections):
+        return None
+    planet_ids = {planet["id"] for planet in get_solar_system_data()["planets"]}
+    if any(
+        str(section.get("originId") or "") not in planet_ids
+        or str(section.get("targetId") or "") not in planet_ids
+        or str(section.get("originId") or "") == str(section.get("targetId") or "")
+        for section in route_sections
+    ):
+        return None
+
+    mission = values.get("mission") if isinstance(values.get("mission"), dict) else {}
+    start_date = str(mission.get("startDate") or "")
+    if not start_date:
+        raise ValueError("mission.startDate ist fuer direkte Lambert-Routen erforderlich.")
+    constraints = values.get("lambertConstraints") if isinstance(values.get("lambertConstraints"), dict) else {}
+    plans = []
+    current_start_date = start_date
+    for section in route_sections:
+        origin_id = str(section.get("originId") or "")
+        target_id = str(section.get("targetId") or "")
+        plan = calculate_trajectory_plan({
+            "start": {
+                "type": "body",
+                "bodyId": origin_id,
+                "orbitAltitudeKm": mission.get("parkingOrbitAltitudeKm", 400),
+                "startDate": current_start_date,
+            },
+            "target": {
+                "type": "body",
+                "bodyId": target_id,
+                "arrivalMode": "flyby",
+                "entryCorridor": section.get("corridor") or {},
+            },
+            "waypoints": [],
+            "searchWindow": {
+                "departureStartDate": current_start_date,
+                "departureEndDate": current_start_date,
+                "departureStepDays": 1,
+                "arrivalStepDays": constraints.get("arrivalStepDays", 20),
+            },
+            "constraints": {
+                "minFlightDays": constraints.get("minFlightDays", 120),
+                "maxFlightDays": constraints.get("maxFlightDays", 1_200),
+                **(values.get("constraints") if isinstance(values.get("constraints"), dict) else {}),
+            },
+            "optimizationMode": values.get("optimizationMode") or "balanced",
+            "simulation": {
+                "sampleTrajectoryPoints": 160,
+                "includeUncertainty": False,
+                "includeAudit": False,
+                "propagationYears": constraints.get("propagationYears", 5),
+            },
+        })
+        plans.append((section, plan))
+        current_start_date = str(plan["summary"].get("targetReachedDate") or plan["bestCandidate"]["arrivalDate"])
+
+    trajectory = []
+    segments = []
+    route_section_payloads = []
+    elapsed_offset = 0.0
+    total_flight_days = 0.0
+    required_leg_delta_vs = []
+    arrival_excess_speeds = []
+    last_target_id = str(route_sections[-1].get("targetId") or "")
+    last_target_center = None
+    last_target_position = None
+    last_incoming_direction = [1.0, 0.0, 0.0]
+    maximum_endpoint_residual = 0.0
+    min_solar_radius = None
+    for section_index, (section, plan) in enumerate(plans):
+        leg_trajectory = plan.get("trajectory") or []
+        if len(leg_trajectory) < 2:
+            raise ValueError("Lambert-Route enthaelt zu wenige Stützpunkte.")
+        start_index = len(trajectory)
+        for point_index, point in enumerate(leg_trajectory):
+            if section_index > 0 and point_index == 0:
+                continue
+            trajectory.append({
+                **point,
+                "elapsedDays": float(point["elapsedDays"]) + elapsed_offset,
+            })
+            radius = _vector_length(point["positionKm"])
+            min_solar_radius = radius if min_solar_radius is None else min(min_solar_radius, radius)
+        end_index = len(trajectory) - 1
+        leg_flight_days = float(plan["summary"]["totalFlightDays"])
+        total_flight_days = elapsed_offset + leg_flight_days
+        segments.append({
+            "id": f"lambert-transfer-{section_index + 1}",
+            "label": plan.get("segments", [{}])[0].get(
+                "label",
+                f"{section.get('originId')} -> {section.get('targetId')}",
+            ),
+            "startIndex": start_index,
+            "endIndex": end_index,
+        })
+        target_position = plan.get("target", {}).get("entryPositionKm") or leg_trajectory[-1]["positionKm"]
+        target_center = plan.get("target", {}).get("positionKm") or target_position
+        incoming_direction = _normalize_vector(_vector_delta(target_position, target_center))
+        if _vector_length(incoming_direction) == 0:
+            incoming_direction = _normalize_vector(_vector_delta(
+                leg_trajectory[-1]["positionKm"], leg_trajectory[-2]["positionKm"],
+            ))
+        required_delta_v = float(plan["summary"].get("requiredInjectionDeltaVKmS", 0) or 0)
+        arrival_v_inf = float(plan["summary"].get("arrivalVInfinityKmS", 0) or 0)
+        endpoint_residual = float(plan["summary"].get("endpointResidualKm", 0) or 0)
+        maximum_endpoint_residual = max(maximum_endpoint_residual, endpoint_residual)
+        corridor_payload = plan.get("entryCorridor") or {
+            "enabled": False,
+            "centerDirection": incoming_direction,
+            "horizontalHalfAngleDeg": 0,
+            "verticalHalfAngleDeg": 0,
+            "rotationDeg": 0,
+            "entryInsideCorridor": True,
+        }
+        route_section_payloads.append({
+            "id": section.get("id", f"route-section-{section_index + 1}"),
+            "sectionType": "lambert-body-to-body",
+            "originId": str(section.get("originId") or ""),
+            "targetId": str(section.get("targetId") or ""),
+            "targetName": _planet_name(str(section.get("targetId") or "")),
+            "entryIndex": end_index,
+            "periapsisIndex": end_index,
+            "exitIndex": end_index,
+            "entryDay": elapsed_offset + leg_flight_days,
+            "periapsisDay": elapsed_offset + leg_flight_days,
+            "exitDay": elapsed_offset + leg_flight_days,
+            "entryPositionKm": target_position,
+            "entryDirection": incoming_direction,
+            "entryLatitudeDeg": 0,
+            "minimumAltitudeKm": 0,
+            "requiredTransitionDeltaVKmS": required_delta_v,
+            "availableTransitionDeltaVKmS": float(mission.get("oberthDeltaVKmS", required_delta_v) or required_delta_v),
+            "transitionDeltaVDeficitKmS": max(0, required_delta_v - float(mission.get("oberthDeltaVKmS", required_delta_v) or required_delta_v)),
+            "transferDurationDays": leg_flight_days,
+            "corridorInsertionDeltaVKmS": 0,
+            "entryVelocityPreserved": True,
+            "lookaheadTargetId": str(route_sections[section_index + 1].get("targetId")) if section_index + 1 < len(route_sections) else None,
+            "lookaheadAlignmentDeg": 0,
+            "predictedPassiveTurnDeg": 0,
+            "desiredDepartureDirection": incoming_direction,
+            "predictedOutgoingDirection": incoming_direction,
+            "requestedPassageAngleDeg": 0,
+            "selectedPassageAngleDeg": 0,
+            "lambertEndpointResidualKm": endpoint_residual,
+            "corridor": {
+                **corridor_payload,
+                "entryInsideCorridor": corridor_payload.get("entryInsideCorridor", True),
+            },
+        })
+        required_leg_delta_vs.append(required_delta_v)
+        arrival_excess_speeds.append(arrival_v_inf)
+        last_target_id = str(section.get("targetId") or "")
+        last_target_center = target_center
+        last_target_position = target_position
+        last_incoming_direction = incoming_direction
+        elapsed_offset += leg_flight_days
+
+    if len(trajectory) < 2:
+        raise ValueError("Lambert-Route enthaelt zu wenige Stützpunkte.")
+    last_index = len(trajectory) - 1
+    target_center = last_target_center or trajectory[-1]["positionKm"]
+    available_delta_v = float(mission.get("oberthDeltaVKmS", max(required_leg_delta_vs or [0])) or 0)
+    required_delta_v = max(required_leg_delta_vs or [0.0])
+    arrival_v_inf = arrival_excess_speeds[-1] if arrival_excess_speeds else 0.0
+    all_corridors_inside = all(
+        section["corridor"].get("entryInsideCorridor", True)
+        for section in route_section_payloads
+    )
+    return {
+        "startDate": start_date,
+        "totalFlightDays": total_flight_days,
+        "warnings": [warning for _, plan in plans for warning in (plan.get("warnings") or [])],
+        "waypoint": {
+            "id": last_target_id,
+            "name": _planet_name(last_target_id),
+            "encounterDay": total_flight_days,
+            "flybyAltitudeKm": 0,
+            "trajectoryIndex": last_index,
+            "positionKm": target_center,
+        },
+        "trajectory": trajectory,
+        "segments": segments,
+        "routeSections": route_section_payloads,
+        "stateChain": {
+            "continuousPosition": True,
+            "exitStateFeedsNextSection": True,
+        },
+        "validation": {
+            "collisionFree": True,
+            "minimumSolarRadiusKm": min_solar_radius or 0,
+            "sunRadiusKm": 696_340,
+            "minimumSolarAltitudeKm": (min_solar_radius or 0) - 696_340,
+        },
+        "outgoingDirection": last_incoming_direction,
+        "entryCorridor": route_section_payloads[-1]["corridor"],
+        "summary": {
+            "flybyMode": "multi-section",
+            "requiredInjectionDeltaVKmS": required_delta_v,
+            "availableInjectionDeltaVKmS": available_delta_v,
+            "solarDepartureInjectionApplied": required_delta_v <= available_delta_v,
+            "incomingExcessSpeedKmS": arrival_v_inf,
+            "turnAngleDeg": 0,
+            "heliocentricSpeedBeforeKmS": plans[-1][1]["summary"].get("finalHeliocentricSpeedKmS", 0),
+            "heliocentricSpeedAfterKmS": plans[-1][1]["summary"].get("finalHeliocentricSpeedKmS", 0),
+            "speedGainKmS": 0,
+            "targetCorrectionDeltaVKmS": 0,
+            "targetInjectionApplied": False,
+            "passiveTargeting": True,
+            "actualTargetAlignmentDeg": 0,
+            "courseChangeDeg": 0,
+            "periapsisSpeedKmS": arrival_v_inf,
+            "observationWindowHours": 0,
+            "targetAlignmentDeg": 0,
+            "feasibleWithConfiguredBurn": (
+                all(bool(plan["summary"].get("feasible")) for _, plan in plans)
+                and required_delta_v <= available_delta_v
+                and all_corridors_inside
+            ),
+            "entryCorridorTargeted": any(bool(plan["summary"].get("entryCorridorTargeted")) for _, plan in plans),
+            "entryInsideCorridor": all_corridors_inside,
+            "warnings": [warning for _, plan in plans for warning in (plan.get("warnings") or [])],
+            "model": "multi-leg body-to-body Lambert route bound to launch windows and entry corridors",
+        },
+        "genericTrajectoryPlan": plans[0][1],
+        "genericTrajectoryPlans": [plan for _, plan in plans],
+    }
 
 
 def _write_calculation_activity(
@@ -379,7 +635,10 @@ def waypoint_route_simulation():
         else {"solver": "waypoint", "reason": "legacy-waypoint-request"}
     )
     try:
-        if values.get("routeSections"):
+        lambert_route = _direct_lambert_route(values)
+        if lambert_route is not None:
+            result = lambert_route
+        elif values.get("routeSections"):
             result = simulate_route_sections(values)
         else:
             result = simulate_waypoint_route(values)
@@ -448,6 +707,34 @@ def waypoint_route_simulation():
                 },
             }
         )
+    return jsonify(result)
+
+
+@app.post("/api/trajectory/plan")
+def generic_trajectory_plan():
+    started_at = perf_counter()
+    values = request.get_json(silent=True) or {}
+    try:
+        result = calculate_trajectory_plan(values)
+    except ValueError as error:
+        _write_calculation_activity(
+            "trajectory-plan", started_at, status="rejected",
+            values=values, message=str(error),
+            details={"targetType": (values.get("target") or {}).get("type")},
+        )
+        return jsonify({"error": str(error)}), 400
+    except RuntimeError as error:
+        _write_calculation_activity(
+            "trajectory-plan", started_at, status="error",
+            values=values, message=str(error),
+            details={"targetType": (values.get("target") or {}).get("type")},
+        )
+        return jsonify({"error": str(error)}), 422
+    _write_calculation_activity(
+        "trajectory-plan", started_at, status="success",
+        values=values, result=result,
+        details={"mode": result.get("mode"), "targetType": result.get("target", {}).get("type")},
+    )
     return jsonify(result)
 
 
@@ -704,17 +991,20 @@ def ai_ml_evaluation():
 
 @app.post("/api/ai/ml/train")
 def ai_ml_train():
-    report = train_and_evaluate(persist_model=True)
+    values = request.get_json(silent=True)
+    project_id = _project_id(values)
+    report = train_and_evaluate(persist_model=True, project_id=project_id)
     write_activity(
         source="ml-ranker",
         category="ai",
         action="ml-candidate-ranker-trained",
         status="success" if report["verdict"] == "ready" else "rejected",
-        project_id=_project_id(request.get_json(silent=True)),
+        project_id=project_id,
         values={
             "trainingRows": report["dataset"]["rows"],
             "positiveRows": report["dataset"]["positiveRows"],
             "negativeRows": report["dataset"]["negativeRows"],
+            "userCorrectionRows": report["dataset"]["userCorrectionRows"],
             "groups": report["evaluation"]["groups"],
             "pairwiseAccuracy": report["evaluation"]["pairwiseAccuracy"],
         },

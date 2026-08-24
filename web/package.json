@@ -10,7 +10,10 @@
     "test:constellation-graph": "node --experimental-strip-types scripts/constellation-graph-consistency.mjs",
     "test:route-geometry": "node --experimental-strip-types scripts/route-geometry-validation.mjs",
     "test:route-sketch": "node --experimental-strip-types scripts/route-sketch-consistency.mjs",
-    "test:target-projection": "node --experimental-strip-types scripts/target-aligned-projection-consistency.mjs"
+    "test:target-projection": "node --experimental-strip-types scripts/target-aligned-projection-consistency.mjs",
+    "test:route-directions": "node --experimental-strip-types scripts/route-object-directions.mjs",
+    "test:route-selection": "node --experimental-strip-types scripts/route-selection-logic.mjs",
+    "test:moon-catalogue": "node scripts/natural-moon-filter-validation.mjs"
   },
   "dependencies": {
     "@react-three/drei": "latest",

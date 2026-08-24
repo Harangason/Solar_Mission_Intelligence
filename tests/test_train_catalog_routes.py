@@ -6,12 +6,18 @@ from scripts.train_saved_project import _validate_search_window
 
 
 class CatalogTrainingRouteTests(unittest.TestCase):
-    def test_builds_seven_planets_twelve_moons_and_one_voyager_scenario(self):
+    def test_builds_seven_planets_twelve_moons_three_roundtrips_and_one_voyager_scenario(self):
         scenarios = build_scenarios()
         self.assertEqual(len(PLANET_TARGETS), 7)
         self.assertEqual(len(MOON_TARGETS), 12)
-        self.assertEqual(len(scenarios), 20)
+        self.assertEqual(len(scenarios), 23)
         self.assertEqual([item["group"] for item in scenarios].count("voyager"), 1)
+        self.assertEqual([item["group"] for item in scenarios].count("roundtrip"), 3)
+
+    def test_roundtrip_scenarios_include_earth_moon_mars_and_venus(self):
+        scenarios = build_scenarios()
+        route_ids = {item["targetId"] for item in scenarios if item["group"] == "roundtrip"}
+        self.assertEqual(route_ids, {"earth-moon-earth", "earth-mars-earth", "earth-venus-earth"})
 
     def test_voyager_scenario_is_chemical_four_leg_grand_tour(self):
         voyager = next(item for item in build_scenarios() if item["group"] == "voyager")

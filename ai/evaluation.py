@@ -46,6 +46,8 @@ class CandidateExample:
     features: dict[str, float]
     success: bool
     target_score: float
+    sample_weight: float = 1.0
+    user_corrected: bool = False
 
 
 def _finite_number(value: object, default: float = 0.0) -> float:
@@ -79,12 +81,28 @@ def _features_from_values(values: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def normalize_candidate_dataset(paths: list[Path] | None = None) -> list[CandidateExample]:
+def normalize_candidate_dataset(
+    paths: list[Path] | None = None,
+    *,
+    project_id: str = "",
+) -> list[CandidateExample]:
     """Read JSONL activity logs and return normalized candidate examples."""
     paths = paths or [DEFAULT_ACTIVITY_LOG]
     examples: list[CandidateExample] = []
     for path in paths:
-        for record in _jsonl_records(path):
+        records = _jsonl_records(path)
+        selected_variants = {
+            str((record.get("details") or {}).get("resultId") or ""): str(
+                record.get("projectId") or ""
+            )
+            for record in records
+            if record.get("category") == "calculation"
+            and record.get("action") == "constellation-result-selected"
+            and record.get("status") == "success"
+            and isinstance(record.get("details"), dict)
+        }
+        selected_variants.pop("", None)
+        for record in records:
             if record.get("category") != "calculation":
                 continue
             action = str(record.get("action") or "")
@@ -93,6 +111,14 @@ def normalize_candidate_dataset(paths: list[Path] | None = None) -> list[Candida
             values = record.get("values") if isinstance(record.get("values"), dict) else {}
             details = record.get("details") if isinstance(record.get("details"), dict) else {}
             features = _features_from_values(values)
+            variant_id = str(details.get("variantId") or values.get("variantId") or "")
+            correction_project_id = selected_variants.get(variant_id)
+            user_corrected = correction_project_id is not None
+            same_project_correction = (
+                user_corrected
+                and bool(project_id)
+                and correction_project_id == project_id
+            )
             success = (
                 record.get("status") == "success"
                 or values.get("feasible") is True
@@ -107,6 +133,11 @@ def normalize_candidate_dataset(paths: list[Path] | None = None) -> list[Candida
                     - _finite_number(values.get("deltaVDeficitKmS")) * 50.0
                     - _finite_number(values.get("targetAlignmentDeg")) * 8.0
                 )
+            if user_corrected:
+                # An explicitly applied user choice is stronger supervision than
+                # the solver's automatic rank. Keep the physical validity label,
+                # but teach the prioritizer to prefer that candidate next time.
+                target_score += 2_000.0
             examples.append(CandidateExample(
                 source_id=str(record.get("id") or f"{path.name}:{len(examples)}"),
                 search_run_id=str(details.get("searchRunId") or values.get("searchRunId") or ""),
@@ -115,12 +146,24 @@ def normalize_candidate_dataset(paths: list[Path] | None = None) -> list[Candida
                 features=features,
                 success=success,
                 target_score=target_score,
+                sample_weight=(
+                    4.0 if same_project_correction
+                    else 2.0 if user_corrected and project_id
+                    else 4.0 if user_corrected
+                    else 1.0
+                ),
+                user_corrected=user_corrected,
             ))
     return examples
 
 
-def _mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else 0.0
+def _weighted_mean(values: list[float], weights: list[float]) -> float:
+    total_weight = sum(weights)
+    return (
+        sum(value * weight for value, weight in zip(values, weights)) / total_weight
+        if values and total_weight > 0.0
+        else 0.0
+    )
 
 
 def train_candidate_ranker(examples: list[CandidateExample]) -> dict[str, Any]:
@@ -133,29 +176,34 @@ def train_candidate_ranker(examples: list[CandidateExample]) -> dict[str, Any]:
             "intercept": 0.0,
             "trainingRows": 0,
             "positiveRows": 0,
+            "userCorrectionRows": 0,
             "useOnlyForPrioritization": True,
         }
     positives = [example for example in examples if example.success]
+    sample_weights = [example.sample_weight for example in examples]
     target_values = [example.target_score for example in examples]
-    target_mean = _mean(target_values)
-    target_scale = math.sqrt(_mean([
+    target_mean = _weighted_mean(target_values, sample_weights)
+    target_scale = math.sqrt(_weighted_mean([
         (value - target_mean) ** 2 for value in target_values
-    ])) or 1.0
+    ], sample_weights)) or 1.0
     weights: dict[str, float] = {}
     feature_means: dict[str, float] = {}
     feature_scales: dict[str, float] = {}
     for name in FEATURE_NAMES:
         all_values = [example.features.get(name, 0.0) for example in examples]
-        feature_mean = _mean(all_values)
-        variance = _mean([(value - feature_mean) ** 2 for value in all_values])
+        feature_mean = _weighted_mean(all_values, sample_weights)
+        variance = _weighted_mean(
+            [(value - feature_mean) ** 2 for value in all_values],
+            sample_weights,
+        )
         scale = math.sqrt(variance) or 1.0
         feature_means[name] = feature_mean
         feature_scales[name] = scale
-        weights[name] = _mean([
+        weights[name] = _weighted_mean([
             ((example.features.get(name, 0.0) - feature_mean) / scale)
             * ((example.target_score - target_mean) / target_scale)
             for example in examples
-        ])
+        ], sample_weights)
     return {
         "schemaVersion": "1.0",
         "modelType": "quality-linear-ranker",
@@ -166,6 +214,7 @@ def train_candidate_ranker(examples: list[CandidateExample]) -> dict[str, Any]:
         "intercept": 0.0,
         "trainingRows": len(examples),
         "positiveRows": len(positives),
+        "userCorrectionRows": sum(1 for example in examples if example.user_corrected),
         "useOnlyForPrioritization": True,
     }
 
@@ -241,8 +290,9 @@ def train_and_evaluate(
     *,
     persist_model: bool = False,
     model_path: Path = DEFAULT_MODEL_PATH,
+    project_id: str = "",
 ) -> dict[str, Any]:
-    examples = normalize_candidate_dataset(paths)
+    examples = normalize_candidate_dataset(paths, project_id=project_id)
     model = train_candidate_ranker(examples)
     evaluation = evaluate_candidate_ranker(examples, model)
     positive_rows = sum(1 for example in examples if example.success)
@@ -258,6 +308,7 @@ def train_and_evaluate(
             "rows": len(examples),
             "positiveRows": positive_rows,
             "negativeRows": negative_rows,
+            "userCorrectionRows": sum(1 for example in examples if example.user_corrected),
             "featureNames": FEATURE_NAMES,
         },
         "model": model,

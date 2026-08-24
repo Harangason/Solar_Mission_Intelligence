@@ -217,3 +217,87 @@ export interface SolarSystemData {
   planets: PlanetData[]
   scaleNotice: string
 }
+
+export type TrajectoryStartType = 'body' | 'orbit' | 'state_vector'
+export type TrajectoryTargetType = 'body' | 'body_orbit' | 'flyby' | 'zone' | 'boundary' | 'direction' | 'state_vector'
+export type TrajectoryOptimizationMode = 'minimum_energy' | 'minimum_time' | 'minimum_arrival_speed' | 'maximum_exit_speed' | 'minimum_delta_v' | 'balanced' | 'custom'
+export type TrajectoryWaypointType = 'body_flyby' | 'solar_oberth' | 'deep_space_maneuver' | 'zone_crossing' | 'manual_point'
+
+export interface GenericTrajectoryCandidate {
+  id: string
+  departureDate?: string
+  arrivalDate?: string
+  flightDays: number
+  startBodyId?: string
+  targetBodyId?: string
+  waypointIds?: string[]
+  c3Km2S2?: number
+  departureVInfinityKmS?: number
+  arrivalVInfinityKmS?: number
+  requiredDeltaVKmS?: number
+  totalDeltaVKmS?: number
+  finalHeliocentricSpeedKmS?: number
+  score: number
+  feasible: boolean
+  warnings: string[]
+}
+
+export interface GenericTrajectoryPlannerResult {
+  mode: string
+  input: Record<string, unknown>
+  start: {
+    type: string
+    bodyId?: string
+    date: string
+    positionKm: [number, number, number]
+    velocityKmS: [number, number, number]
+  }
+  target: {
+    type: string
+    bodyId?: string
+    zoneId?: string
+    boundaryId?: string
+    direction?: [number, number, number]
+    date?: string
+    positionKm?: [number, number, number]
+    distanceAU?: number
+    innerRadiusAU?: number
+    outerRadiusAU?: number
+    radiusAU?: number
+  }
+  bestCandidate?: GenericTrajectoryCandidate
+  candidates?: GenericTrajectoryCandidate[]
+  guide: {
+    mode: string
+    nodes: Array<Record<string, unknown> & { id: string; kind: string }>
+    legs: Array<Record<string, unknown> & { id: string; from: string; to: string }>
+  }
+  segments: Array<{ id: string; label: string; startIndex: number; endIndex: number }>
+  trajectory: Array<{
+    elapsedDays: number
+    positionKm: [number, number, number]
+    velocityKmS?: [number, number, number]
+  }>
+  summary: {
+    totalFlightDays: number
+    totalDeltaVKmS?: number
+    requiredInjectionDeltaVKmS?: number
+    c3Km2S2?: number
+    departureVInfinityKmS?: number
+    arrivalVInfinityKmS?: number
+    finalHeliocentricSpeedKmS?: number
+    targetReached: boolean
+    targetReachedDate?: string
+    targetReachedDistanceAU?: number
+    targetAlignmentDeg?: number
+    feasible: boolean
+    model: string
+  }
+  warnings: string[]
+  audit?: { runId: string; createdAtUtc?: string; logFile?: string; documentation?: string }
+  legacyRoute?: unknown
+  zoneEntryDate?: string | null
+  zoneExitDate?: string | null
+  zoneEntryDistanceAU?: number | null
+  zoneExitDistanceAU?: number | null
+}

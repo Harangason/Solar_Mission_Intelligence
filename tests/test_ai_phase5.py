@@ -97,6 +97,58 @@ class MLPhaseFiveTests(unittest.TestCase):
         self.assertGreater(evaluation["top1SuccessRateModel"], evaluation["top1SuccessRateBaseline"])
         self.assertEqual(evaluation["pairwiseAccuracy"], 1.0)
 
+    def test_corrections_transfer_between_projects_with_active_project_priority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "activities.jsonl"
+            write_jsonl(log_path, [
+                {
+                    "id": "candidate-selected",
+                    "projectId": "project-a",
+                    "category": "calculation",
+                    "action": "constellation-candidate",
+                    "status": "success",
+                    "values": {"quality": 100, "feasible": True},
+                    "details": {"searchRunId": "run-a", "variantId": "variant-a"},
+                },
+                {
+                    "id": "candidate-other-project",
+                    "projectId": "project-b",
+                    "category": "calculation",
+                    "action": "constellation-candidate",
+                    "status": "success",
+                    "values": {"quality": 900, "feasible": True},
+                    "details": {"searchRunId": "run-b", "variantId": "variant-b"},
+                },
+                {
+                    "id": "user-feedback",
+                    "projectId": "project-a",
+                    "category": "calculation",
+                    "action": "constellation-result-selected",
+                    "status": "success",
+                    "details": {"searchRunId": "run-a", "resultId": "variant-a"},
+                },
+                {
+                    "id": "other-project-feedback",
+                    "projectId": "project-b",
+                    "category": "calculation",
+                    "action": "constellation-result-selected",
+                    "status": "success",
+                    "details": {"searchRunId": "run-b", "resultId": "variant-b"},
+                },
+            ])
+
+            examples = normalize_candidate_dataset([log_path], project_id="project-a")
+
+        self.assertEqual(len(examples), 2)
+        active_project = next(item for item in examples if item.source_id == "candidate-selected")
+        transferred = next(item for item in examples if item.source_id == "candidate-other-project")
+        self.assertTrue(active_project.user_corrected)
+        self.assertEqual(active_project.sample_weight, 4.0)
+        self.assertEqual(active_project.target_score, 2_100)
+        self.assertTrue(transferred.user_corrected)
+        self.assertEqual(transferred.sample_weight, 2.0)
+        self.assertEqual(transferred.target_score, 2_900)
+
     def test_train_and_evaluate_reports_more_data_needed_for_empty_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             report = train_and_evaluate([Path(directory) / "missing.jsonl"])

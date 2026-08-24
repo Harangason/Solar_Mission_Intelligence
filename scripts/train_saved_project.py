@@ -11,10 +11,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from ai.evaluation import train_and_evaluate
 from planner.multi_route_planner import simulate_route_sections
@@ -23,7 +27,6 @@ from services.project_store import ProjectStore
 from solver.trajectory import get_default_mission_config
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BATCH_DIRECTORY = PROJECT_ROOT / "data" / "ml_training_batches"
 
 
