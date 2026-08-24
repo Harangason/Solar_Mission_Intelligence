@@ -944,6 +944,8 @@ verweisen.
 
 ## Weiterfuehrende Dokumentation
 
+- [`SCRIPT_GUIDE.md`](SCRIPT_GUIDE.md) fuehrt zu den Erklaerungen jeder
+  einzelnen Python-, TypeScript- und TSX-Datei direkt in ihrem Codeordner.
 - [`docs/README.md`](docs/README.md) ist der zentrale Dokumentationsindex.
 - [`docs/CALCULATION_METHODS.md`](docs/CALCULATION_METHODS.md) beschreibt die
   Nachweisfuehrung der Routenberechnung.
