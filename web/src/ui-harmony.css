@@ -1,0 +1,197 @@
+/* Gemeinsame Oberflächenregeln für Übersicht, Berechnung, 2D und 3D. */
+:root {
+  --ui-bg: #050b18;
+  --ui-surface: #0b1729;
+  --ui-surface-raised: #11213a;
+  --ui-line: rgba(154, 199, 226, .2);
+  --ui-line-strong: rgba(154, 199, 226, .38);
+  --ui-text: #f3f8ff;
+  --ui-muted: #a9bed1;
+  --ui-accent: #8be8ff;
+  --ui-radius: 16px;
+  --ui-focus: 0 0 0 3px rgba(139, 232, 255, .36);
+  color: var(--ui-text);
+  background: var(--ui-bg);
+}
+
+body {
+  color: var(--ui-text);
+  background: radial-gradient(circle at 50% -8%, #1a304e 0, #09172a 35%, var(--ui-bg) 75%);
+}
+
+.topbar {
+  gap: 16px;
+  padding-inline: clamp(18px, 3vw, 48px);
+  border-bottom-color: var(--ui-line);
+  background: rgba(5, 11, 24, .92);
+}
+.brand { flex: 0 0 auto; font-size: .95rem; }
+.brand:focus-visible { border-radius: 8px; outline: 2px solid var(--ui-accent); outline-offset: 5px; }
+.topbar-actions { flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.view-switcher {
+  gap: 3px;
+  padding: 4px;
+  border-color: var(--ui-line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .035);
+}
+.view-switcher button {
+  min-height: 36px;
+  min-width: 50px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  color: var(--ui-muted);
+  font-size: .78rem;
+  font-weight: 650;
+}
+.view-switcher button:hover { color: var(--ui-text); background: rgba(139, 232, 255, .1); }
+.view-switcher button.active { color: #061321; background: var(--ui-accent); box-shadow: 0 2px 12px rgba(139, 232, 255, .16); }
+.view-switcher button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.project-actions { min-height: 44px; border-color: var(--ui-line); border-radius: 12px; background: rgba(255, 255, 255, .035); }
+.project-actions > span { color: var(--ui-muted); font-size: .72rem; }
+.project-actions button, .settings-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border-color: var(--ui-line);
+  border-radius: 8px;
+  color: var(--ui-text);
+  background: rgba(255, 255, 255, .045);
+  font-size: .73rem;
+}
+.settings-button { min-height: 44px; }
+.settings-button:hover, .settings-button:focus-visible,
+.project-actions button:hover, .project-actions button:focus-visible {
+  border-color: var(--ui-accent);
+  color: #061321;
+  background: var(--ui-accent);
+}
+
+.chooser { width: min(1120px, calc(100% - 48px)); padding-block: clamp(52px, 8vh, 96px); }
+.chooser h1 { max-width: 900px; font-size: clamp(2.5rem, 5vw, 4.8rem); line-height: 1.06; }
+.intro, .view-heading > p { color: var(--ui-muted); }
+.choice-grid { gap: 16px; }
+.choice-card {
+  min-height: 220px;
+  padding: 28px;
+  border-color: var(--ui-line);
+  border-radius: var(--ui-radius);
+  background: linear-gradient(150deg, rgba(25, 45, 72, .88), rgba(9, 20, 38, .96));
+}
+.choice-card:focus-visible { box-shadow: var(--ui-focus); }
+.choice-number { margin-bottom: 36px; color: var(--ui-accent); }
+.choice-card strong { font-size: 1.45rem; }
+.choice-card > span:last-child { color: var(--ui-muted); }
+
+.view-panel { padding-top: 36px; }
+.view-heading { align-items: flex-start; }
+.view-heading h1 { line-height: 1.1; }
+.eyebrow { color: var(--ui-accent); }
+
+/* Die Hauptflächen erhalten die gleiche Kontur und Rundung. */
+.ai-chat-panel, .route-section-list, .route-project-empty,
+.two-d-planet-details, .planet-corridor-planner,
+.local-planet-three-d, .orbital-plot,
+.time-controls, .planet-view-actions, .scene-help {
+  border-color: var(--ui-line);
+  border-radius: var(--ui-radius);
+}
+.ai-chat-panel, .route-section-list, .two-d-planet-details,
+.planet-corridor-planner, .local-planet-three-d {
+  background-color: rgba(8, 20, 37, .92);
+}
+.route-project-empty { background: rgba(8, 20, 37, .7); }
+.two-d-planet-details dl div { background: var(--ui-surface); }
+.two-d-planet-details dt, .two-d-planet-details header small,
+.route-section-list th, .route-section-list tr.route-section-empty-row td {
+  color: var(--ui-muted);
+}
+.two-d-planet-details dt { font-size: .7rem; }
+.two-d-planet-details dd { font-size: .86rem; }
+.route-section-list > header h2 { font-size: 1.18rem; }
+.route-section-list table { font-size: .78rem; }
+.route-section-list th { font-size: .67rem; }
+.route-section-list td strong { font-size: .8rem; }
+.route-section-new, .route-section-actions button { font-size: .75rem; }
+
+/* Gleiches Eingabe- und Dialogbild in allen Arbeitsbereichen. */
+.app-shell input:not([type='checkbox']):not([type='radio']):not([type='range']),
+.app-shell select, .app-shell textarea {
+  border-color: var(--ui-line);
+  border-radius: 9px;
+  color: var(--ui-text);
+  background-color: var(--ui-surface);
+}
+.app-shell input:focus-visible, .app-shell select:focus-visible,
+.app-shell textarea:focus-visible, .app-shell button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+.app-shell input[type='checkbox'], .app-shell input[type='radio'],
+.app-shell input[type='range'] { accent-color: var(--ui-accent); }
+.route-section-wizard, .route-preview-dialog, .route-calculation-dialog,
+.activity-settings-dialog {
+  border-color: var(--ui-line-strong);
+  border-radius: var(--ui-radius);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+.route-section-wizard > header, .route-preview-dialog > header,
+.route-calculation-dialog > header, .activity-settings-dialog > header {
+  border-bottom-color: var(--ui-line);
+  background: linear-gradient(130deg, rgba(45, 98, 133, .25), rgba(9, 21, 38, .6));
+}
+.route-section-wizard > footer, .route-preview-dialog > footer,
+.route-calculation-dialog > footer, .activity-settings-dialog > footer {
+  border-top-color: var(--ui-line);
+  background: rgba(5, 13, 26, .9);
+}
+.activity-settings-toolbar label:not(.activity-project-filter),
+.project-save-fields label { color: var(--ui-muted); font-size: .74rem; }
+.activity-table-wrap table { font-size: .72rem; }
+.activity-table-wrap th { color: var(--ui-muted); }
+
+/* Die 3D-Werkzeuge verwenden dieselben Flächen wie die 2D-Werkzeuge. */
+.target-controls, .mission-layout > .parameter-panel {
+  border-color: var(--ui-line);
+  background-color: rgba(7, 17, 33, .96);
+}
+.time-controls, .planet-view-actions, .scene-help {
+  background: rgba(6, 16, 31, .9);
+  backdrop-filter: blur(14px);
+}
+.planet-view-actions button { font-size: .76rem; }
+.scene-help { color: var(--ui-muted); }
+
+@media (max-width: 1050px) {
+  .topbar { height: auto; min-height: 74px; padding-block: 10px; }
+  .topbar-actions { flex: 1 1 100%; justify-content: space-between; }
+  .view-switcher { order: -1; }
+  .project-actions { order: 0; }
+  .settings-button { order: 1; }
+}
+@media (min-width: 821px) and (max-width: 1050px) {
+  .mission-layout {
+    --mission-planner-height: calc(100dvh - 112px);
+    flex-basis: calc(100dvh - 112px);
+    height: calc(100dvh - 112px);
+    max-height: calc(100dvh - 112px);
+  }
+  .mission-layout > .scene-wrap,
+  .mission-layout > .parameter-panel { height: calc(100dvh - 112px); }
+  .target-controls { top: 112px; }
+}
+@media (max-width: 620px) {
+  .topbar { gap: 10px; }
+  .topbar-actions { gap: 8px; }
+  .view-switcher { flex: 1 1 100%; justify-content: space-between; }
+  .view-switcher button { min-width: 0; flex: 1 1 auto; padding-inline: 7px; }
+  .project-actions { flex: 1 1 auto; justify-content: space-between; }
+  .project-actions button { font-size: .69rem; }
+  .settings-button { min-height: 34px; }
+  .chooser { width: min(100% - 32px, 480px); }
+  .view-panel { width: calc(100% - 28px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .choice-card { transition: none; }
+  .choice-card:hover { transform: none; }
+}

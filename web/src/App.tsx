@@ -330,29 +330,28 @@ export function App() {
           Unser Sonnensystem
         </button>
         <div className="topbar-actions">
-          {viewMode !== 'menu' && (
-            <>
-            <div className="project-actions" aria-label="Projektverwaltung">
-              <span title={projectStatus || undefined}>{projectName || 'Ungespeichertes Projekt'}</span>
-              <button type="button" disabled={projectBusy} onClick={() => void saveCurrentProject()}>Speichern</button>
-              <button type="button" disabled={projectBusy} onClick={() => void showProjectDialog('save-as')}>Speichern unter …</button>
-              <button type="button" disabled={projectBusy} onClick={() => void showProjectDialog('open')}>Öffnen …</button>
-            </div>
-            <nav className="view-switcher" aria-label="Darstellung wechseln">
-              <button className={viewMode === 'calculation' ? 'active' : ''} type="button" onClick={() => setViewMode('calculation')}>
-                Berechnung
-              </button>
-              <button className={viewMode === '2d' ? 'active' : ''} type="button" onClick={() => setViewMode('2d')}>
-                2D
-              </button>
-              <button className={viewMode === '3d' ? 'active' : ''} type="button" onClick={() => setViewMode('3d')}>
-                3D
-              </button>
-            </nav>
-            </>
-          )}
+          <nav className="view-switcher" aria-label="Ansicht wechseln">
+            <button className={viewMode === 'menu' ? 'active' : ''} aria-current={viewMode === 'menu' ? 'page' : undefined} type="button" onClick={() => setViewMode('menu')}>
+              Übersicht
+            </button>
+            <button className={viewMode === 'calculation' ? 'active' : ''} aria-current={viewMode === 'calculation' ? 'page' : undefined} type="button" onClick={() => setViewMode('calculation')}>
+              Berechnung
+            </button>
+            <button className={viewMode === '2d' ? 'active' : ''} aria-current={viewMode === '2d' ? 'page' : undefined} type="button" onClick={() => setViewMode('2d')}>
+              2D
+            </button>
+            <button className={viewMode === '3d' ? 'active' : ''} aria-current={viewMode === '3d' ? 'page' : undefined} type="button" onClick={() => setViewMode('3d')}>
+              3D
+            </button>
+          </nav>
+          <div className="project-actions" aria-label="Projektverwaltung">
+            <span title={projectStatus || undefined}>{projectName || 'Ungespeichertes Projekt'}</span>
+            <button type="button" disabled={projectBusy} onClick={() => void saveCurrentProject()}>Speichern</button>
+            <button type="button" disabled={projectBusy} onClick={() => void showProjectDialog('save-as')}>Speichern unter …</button>
+            <button type="button" disabled={projectBusy} onClick={() => void showProjectDialog('open')}>Öffnen …</button>
+          </div>
           <button className="settings-button" type="button" onClick={() => setSettingsOpen(true)}>
-            Settings
+            Einstellungen
           </button>
         </div>
       </header>

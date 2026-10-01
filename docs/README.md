@@ -9,6 +9,7 @@ die [Projekt-README](../README.md).
 | Bereich | Dokumentation | Inhalt |
 | --- | --- | --- |
 | Struktur | [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | Pakete und Abhaengigkeiten |
+| Tool-Aufbau | [TOOL_AUFBAU_ANALYSE.md](TOOL_AUFBAU_ANALYSE.md) | Kapitelweise Analyse von KI, Berechnung, 2D, 3D und Simulation |
 | Datenbank | [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) | Persistierte Berechnungsläufe und Einheiten |
 | Planner | [README_PLANNER.md](README_PLANNER.md) | Routenplanung und Optimierung |
 | Solver | [README_SOLVER.md](README_SOLVER.md) | Numerische Bahnloeser und Ephemeriden |
