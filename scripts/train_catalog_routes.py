@@ -21,6 +21,7 @@ from scripts.train_saved_project import (
     _parse_date,
     _sample_dates,
     _validate_search_window,
+    resolve_worker_count,
 )
 from services.activity_log import write_activity
 from solver.trajectory import get_default_mission_config
@@ -157,11 +158,12 @@ def run_catalog_batch(
     scenarios = build_scenarios()
     dates = _sample_dates(_parse_date(search_start), _parse_date(search_end), runs_per_scenario)
     batch_id = f"ml-catalog-batch-{uuid4().hex}"
-    jobs = [
-        (scenario, start_date)
-        for scenario in scenarios
-        for start_date in dates
-    ]
+    job_count = len(scenarios) * len(dates)
+
+    def iter_jobs():
+        for scenario in scenarios:
+            for start_date in dates:
+                yield scenario, start_date
 
     def calculate(job: tuple[dict, str]) -> dict:
         scenario, start_date = job
@@ -170,8 +172,10 @@ def run_catalog_batch(
 
     results: list[dict] = []
     counters: Counter[tuple[str, str, str]] = Counter()
-    with ThreadPoolExecutor(max_workers=max(1, min(workers, 8))) as executor:
-        for index, item in enumerate(executor.map(calculate, jobs), start=1):
+    worker_count = resolve_worker_count(workers, job_count)
+    print(f"Katalog-Training nutzt {worker_count} Worker", flush=True)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for index, item in enumerate(executor.map(calculate, iter_jobs()), start=1):
             scenario = item["scenario"]
             calculated = item["calculated"]
             route_label = " · ".join(
@@ -201,8 +205,8 @@ def run_catalog_batch(
                     "routeLabel": route_label,
                 },
             )
-            if index % 25 == 0 or index == len(jobs):
-                print(f"{index}/{len(jobs)} Berechnungen abgeschlossen", flush=True)
+            if index % 25 == 0 or index == job_count:
+                print(f"{index}/{job_count} Berechnungen abgeschlossen", flush=True)
 
     report = train_and_evaluate(persist_model=True)
     scenario_summaries = [{
@@ -240,7 +244,7 @@ def main() -> int:
     parser.add_argument("--runs-per-scenario", type=int, default=50)
     parser.add_argument("--search-start", required=True)
     parser.add_argument("--search-end", required=True)
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=0, help="0 = automatisch alle CPU-Kerne, RAM-schonend begrenzt")
     parser.add_argument("--allow-historical", action="store_true")
     args = parser.parse_args()
     summary = run_catalog_batch(

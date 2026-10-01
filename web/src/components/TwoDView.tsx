@@ -68,6 +68,7 @@ interface TwoDViewProps {
   missionConfig: MissionConfig | null
   solverDialogOnly?: boolean
   onSolverDialogClose?: () => void
+  displayOnly?: boolean
 }
 
 interface ConstellationSearchResult {
@@ -87,6 +88,79 @@ interface ConstellationSearchResult {
   targetCorrectionDeltaVKmS: number
   corridorInsertionDeficitKmS: number
   targetAlignmentDeg: number
+}
+
+interface PersistedCalculationSection {
+  source_section_id?: string
+  origin_body_id?: string
+  target_body_id?: string
+  target_name?: string
+  details_json?: string
+}
+
+type PersistedRoutePoint =
+  | [number, number, number]
+  | { elapsedDays?: number; positionKm?: [number, number, number] }
+
+interface PersistedCalculationVariant {
+  id: string
+  calculationRunId: string
+  date: string
+  sections?: PersistedCalculationSection[]
+  routePoints?: PersistedRoutePoint[]
+  totalFlightDays?: number
+  quality?: number
+  geometryValid?: boolean
+  hypotheticalInterstellarAsymptote?: boolean
+  feasible?: boolean
+  corridorSatisfied?: boolean
+  collisionFree?: boolean
+  requiredInjectionDeltaVKmS?: number
+  availableInjectionDeltaVKmS?: number
+  targetCorrectionDeltaVKmS?: number
+  corridorInsertionDeficitKmS?: number
+  targetAlignmentDeg?: number
+  warnings?: Array<string | { message?: string }>
+}
+
+function parsePersistedRouteSection(
+  section: PersistedCalculationSection,
+  fallback: RouteSectionDefinition | undefined,
+): RouteSectionDefinition | null {
+  if (section.details_json) {
+    try {
+      const parsed = JSON.parse(section.details_json) as RouteSectionDefinition
+      if (parsed && parsed.originId && parsed.targetId) return parsed
+    } catch {
+      // Older persisted rows can still be reconstructed from the columns below.
+    }
+  }
+  if (!fallback) return null
+  return {
+    ...fallback,
+    id: section.source_section_id || fallback.id,
+    originId: section.origin_body_id || fallback.originId,
+    targetId: section.target_body_id || fallback.targetId,
+  }
+}
+
+function persistedRoutePoint(
+  point: PersistedRoutePoint,
+): { elapsedDays: number | null; positionKm: [number, number, number] } | null {
+  if (Array.isArray(point) && point.length >= 3) {
+    const [x, y, z] = point
+    if ([x, y, z].every(Number.isFinite)) return { elapsedDays: null, positionKm: [x, y, z] }
+  }
+  if (point && !Array.isArray(point) && Array.isArray(point.positionKm)) {
+    const [x, y, z] = point.positionKm
+    if ([x, y, z].every(Number.isFinite)) {
+      return {
+        elapsedDays: Number.isFinite(point.elapsedDays) ? point.elapsedDays as number : null,
+        positionKm: [x, y, z],
+      }
+    }
+  }
+  return null
 }
 
 const TARGET_GOOD_CONSTELLATION_RESULTS = 10
@@ -585,6 +659,7 @@ export function TwoDView({
   missionConfig,
   solverDialogOnly = false,
   onSolverDialogClose,
+  displayOnly = false,
 }: TwoDViewProps) {
   const routeSections = useMemo(
     () => normalizeRouteSections(rawRouteSections),
@@ -2678,9 +2753,92 @@ export function TwoDView({
     }
   }
 
-  const applyConstellationResult = (resultId: string) => {
+  const applyConstellationResult = async (
+    resultId: string,
+    fallbackCandidate?: RouteCalculationCandidateTrace,
+  ) => {
     const result = constellationResults.find((item) => item.id === resultId)
-    if (!result) return
+    if (!result && fallbackCandidate?.fullCorridorCheck && (
+      fallbackCandidate.status === 'performance-valid'
+      || fallbackCandidate.status === 'success'
+      || fallbackCandidate.feasible === true
+    )) {
+      try {
+        const response = await fetch(
+          `/api/calculations/variants/${encodeURIComponent(resultId)}`,
+          { headers: activityRequestHeaders() },
+        )
+        const persisted = await response.json() as PersistedCalculationVariant & { error?: string }
+        if (!response.ok) throw new Error(persisted.error ?? `HTTP ${response.status}`)
+        const restoredSections = (persisted.sections ?? [])
+          .map((section, index) => parsePersistedRouteSection(section, routeSections[index]))
+          .filter((section): section is RouteSectionDefinition => Boolean(section))
+        if (restoredSections.length === 0) {
+          throw new Error('Diese historische Variante enthaelt keine wiederherstellbaren Routenabschnitte.')
+        }
+        const restoredPoints = (persisted.routePoints ?? [])
+          .map(persistedRoutePoint)
+          .filter((point): point is { elapsedDays: number | null; positionKm: [number, number, number] } => Boolean(point))
+        const totalFlightDays = Number.isFinite(persisted.totalFlightDays)
+          ? persisted.totalFlightDays as number
+          : Math.max(0, restoredPoints.length - 1)
+        const trajectory = restoredPoints.length > 0
+          ? restoredPoints.map((point, index) => ({
+              elapsedDays: point.elapsedDays ?? (
+                restoredPoints.length > 1
+                  ? totalFlightDays * index / (restoredPoints.length - 1)
+                  : 0
+              ),
+              positionKm: point.positionKm,
+            }))
+          : [{ elapsedDays: 0, positionKm: [0, 0, 0] as [number, number, number] }]
+        const lastSection = restoredSections.at(-1)
+        const waypointPosition = trajectory.at(-1)?.positionKm ?? [0, 0, 0] as [number, number, number]
+        const restoredRoute: WaypointRouteResult = {
+          calculationPersistence: {
+            runId: persisted.calculationRunId,
+            variantId: persisted.id,
+          },
+          startDate: persisted.date,
+          totalFlightDays,
+          waypoint: {
+            id: lastSection?.targetId ?? 'target',
+            name: persisted.sections?.at(-1)?.target_name || lastSection?.targetId || 'Ziel',
+            encounterDay: totalFlightDays,
+            flybyAltitudeKm: 0,
+            positionKm: waypointPosition,
+          },
+          trajectory,
+          warnings: (persisted.warnings ?? []).map((warning) => (
+            typeof warning === 'string' ? warning : warning.message ?? 'Persistierte Warnung'
+          )),
+        }
+        await fetch(
+          `/api/calculations/runs/${encodeURIComponent(persisted.calculationRunId)}/variants/${encodeURIComponent(persisted.id)}`,
+          {
+            method: 'PATCH',
+            headers: activityRequestHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ selected: true }),
+          },
+        )
+        setSelectedConstellationResultId(persisted.id)
+        onApplyPlannedSolution(persisted.date, restoredSections, restoredRoute)
+        setConstellationSearchStatus(
+          `Historische flugfaehige Loesung uebernommen ${new Date(`${persisted.date}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`
+          + ` · Zielrest ${(persisted.targetAlignmentDeg ?? fallbackCandidate.targetAlignmentDeg ?? 0).toFixed(1)}°`,
+        )
+        if (solverDialogOnly) onSolverDialogClose?.()
+      } catch (reason) {
+        setConstellationSearchStatus(
+          `Historische Variante konnte nicht uebernommen werden: ${reason instanceof Error ? reason.message : String(reason)}`,
+        )
+      }
+      return
+    }
+    if (!result) {
+      setConstellationSearchStatus('Diese Variante ist nicht mehr im aktuellen Ergebnis-Speicher. Bitte den Solverlauf neu laden oder erneut starten.')
+      return
+    }
     setSelectedConstellationResultId(result.id)
     if (result.flightReady) {
       const runId = result.route.calculationPersistence?.runId
@@ -2751,6 +2909,10 @@ export function TwoDView({
     }
     void findBestConstellation()
   }, [data, solverDialogOnly])
+
+  useEffect(() => {
+    if (displayOnly && projection === 'corridor') setProjection('top')
+  }, [displayOnly, projection])
 
   if (error) return solverDialogOnly
     ? <div className="solver-route-launcher"><div>{error}<button type="button" onClick={onSolverDialogClose}>Schließen</button></div></div>
@@ -2901,10 +3063,10 @@ export function TwoDView({
     <section className="view-panel two-d-planner" aria-labelledby="two-d-title">
       <div className="view-heading">
         <div>
-          <p className="eyebrow">Interaktiver Orbitalplaner</p>
-          <h1 id="two-d-title">Das Sonnensystem in 2D</h1>
+          <p className="eyebrow">{displayOnly ? '2D Darstellung' : 'Interaktiver Berechnungsbereich'}</p>
+          <h1 id="two-d-title">{displayOnly ? 'Das Sonnensystem in 2D' : 'Berechnung & Routenplanung'}</h1>
         </div>
-        <aside className="ai-chat-panel" aria-label="Interaktiver KI-Chat fuer die 2D-Planung">
+        {!displayOnly && <aside className="ai-chat-panel" aria-label="Interaktiver KI-Chat fuer die 2D-Planung">
           <header>
             <span>KI-Chat</span>
             <small><b className="ai-chat-status">aktiv</b> · {projectionLabel} · {activeRouteSection ? `${activeRouteSection.originId} -> ${activeRouteSection.targetId}` : 'noch keine Route'}</small>
@@ -3063,16 +3225,16 @@ export function TwoDView({
             </button>
             <button type="submit" disabled={aiChatLoading}>Senden</button>
           </form>
-        </aside>
+        </aside>}
       </div>
 
       <div className="two-d-actionbar" role="toolbar" aria-label="2D-Ansichten">
         <div className="two-d-view-tabs" role="group" aria-label="Projektion">
-          <button type="button" className={projection === 'corridor' ? 'active' : ''} aria-pressed={projection === 'corridor'} onClick={() => setProjection('corridor')}>Zielkorridor</button>
+          {!displayOnly && <button type="button" className={projection === 'corridor' ? 'active' : ''} aria-pressed={projection === 'corridor'} onClick={() => setProjection('corridor')}>Zielkorridor</button>}
           <button type="button" className={projection === 'side' ? 'active' : ''} aria-pressed={projection === 'side'} onClick={() => setProjection('side')}>Kantenansicht · Neigung</button>
           <button type="button" className={projection === 'top' ? 'active' : ''} aria-pressed={projection === 'top'} onClick={() => setProjection('top')}>Draufsicht · Bahnen</button>
         </div>
-        <button
+        {!displayOnly && <button
           type="button"
           className={`retrospective-search-button${retrospectiveSearchEnabled ? ' active' : ''}`}
           aria-pressed={retrospectiveSearchEnabled}
@@ -3081,16 +3243,16 @@ export function TwoDView({
           title="Historisches Missionsdatum bewusst als Start eines Was-wäre-wenn-Szenarios verwenden"
         >
           {retrospectiveSearchEnabled ? 'Rückblick aktiv' : 'Rückblick · Was wäre wenn'}
-        </button>
-        <button
+        </button>}
+        {!displayOnly && <button
           type="button"
           className="best-constellation-button"
           disabled={!data || !moonCatalogue || routeSections.length === 0 || constellationSearchRunning}
           onClick={() => void findBestConstellation()}
         >
           {constellationSearchRunning ? 'Konstellationen werden geprüft …' : 'Beste mögliche Konstellation'}
-        </button>
-        {routeCalculationTrace
+        </button>}
+        {!displayOnly && routeCalculationTrace
           ? (
             <button
               type="button"
@@ -3101,11 +3263,11 @@ export function TwoDView({
                 ? `Analyse · ${Math.round(routeCalculationTrace.progressPercent ?? 0)}%`
                 : routeCalculationTrace.error
                   ? 'Analyse · Fehler'
-                  : `Analyse · fertig (${routeCalculationTrace.candidates.length})`}
+              : `Analyse · fertig (${routeCalculationTrace.candidates.length})`}
             </button>
           )
           : null}
-        {constellationResults.length > 0 && (
+        {!displayOnly && constellationResults.length > 0 && (
           <label className="constellation-result-select">
             <span>Variantenanalyse</span>
             <select
@@ -3166,9 +3328,9 @@ export function TwoDView({
           </>
         )}
       </div>
-      {constellationSearchStatus && <p className="constellation-search-status">{constellationSearchStatus}</p>}
+      {!displayOnly && constellationSearchStatus && <p className="constellation-search-status">{constellationSearchStatus}</p>}
 
-      {projection === 'corridor'
+      {projection === 'corridor' && !displayOnly
         ? (
           <div className="route-section-planner">
             {activeRouteSection

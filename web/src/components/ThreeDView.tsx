@@ -127,6 +127,7 @@ interface ThreeDViewProps {
   onMissionConfigChange: Dispatch<SetStateAction<MissionConfig | null>>
   onVisualConfigChange: Dispatch<SetStateAction<VisualConfig | null>>
   onMissionResultChange: Dispatch<SetStateAction<MissionResult | null>>
+  displayOnly?: boolean
 }
 
 function routeStateAtDay(route: WaypointRouteResult, elapsedDays: number): PlaybackStateSnapshot {
@@ -175,6 +176,7 @@ export function ThreeDView({
   onMissionConfigChange,
   onVisualConfigChange,
   onMissionResultChange,
+  displayOnly = false,
 }: ThreeDViewProps) {
   const [data, setData] = useState<SolarSystemData | null>(null)
   const [moonCatalogue, setMoonCatalogue] = useState<MoonCatalogue | null>(null)
@@ -1308,10 +1310,10 @@ export function ThreeDView({
 
   return (
     <section
-      className={`three-d-layout mission-layout ${missionPlannerOpen ? 'planner-open' : 'planner-collapsed'} ${parameterPanelOpen ? 'parameters-open' : 'parameters-collapsed'} ${routePlanStatus === 'review' ? 'drawing-active' : ''}`}
+      className={`three-d-layout mission-layout ${!displayOnly && missionPlannerOpen ? 'planner-open' : 'planner-collapsed'} ${parameterPanelOpen ? 'parameters-open' : 'parameters-collapsed'} ${routePlanStatus === 'review' ? 'drawing-active' : ''}`}
       aria-label="Interaktives Planeten- und Missionsmodell"
     >
-      <button
+      {!displayOnly && <button
         className="sidebar-toggle sidebar-toggle-left"
         type="button"
         aria-label={missionPlannerOpen ? 'Missionsplanung einklappen' : 'Missionsplanung ausklappen'}
@@ -1320,7 +1322,7 @@ export function ThreeDView({
         onClick={() => setMissionPlannerOpen((open) => !open)}
       >
         <span aria-hidden="true">{missionPlannerOpen ? '‹' : '›'}</span>
-      </button>
+      </button>}
       <button
         className="sidebar-toggle sidebar-toggle-right"
         type="button"
@@ -1497,7 +1499,7 @@ export function ThreeDView({
               </optgroup>
             </select>
           </label>
-          {routeSections.length === 0
+          {!displayOnly && (routeSections.length === 0
             ? (
               <button className="quick-route-calculate" type="button" onClick={onOpenRoutePlanner}>
                 Route anlegen
@@ -1512,8 +1514,8 @@ export function ThreeDView({
             >
               {routeLoading ? 'Validiert …' : !plannedRoute ? 'Solver-Route auswählen' : routeValidationPending ? 'Route mit Satellit validieren' : 'Satellit neu validieren'}
             </button>
-            )}
-          <button
+            ))}
+          {!displayOnly && <button
             className={routePlanStatus === 'review' ? 'active' : ''}
             type="button"
             disabled={!selectedTarget || routeLoading || !routePlanNodes}
@@ -1521,8 +1523,8 @@ export function ThreeDView({
             onClick={activateRouteDrawing}
           >
             {routePlanStatus === 'review' ? 'Zeichnen · aktiv' : routeSketch ? 'Entwurf bearbeiten' : 'Route zeichnen'}
-          </button>
-          {routePlanStatus === 'review' && routeSketch && <>
+          </button>}
+          {!displayOnly && routePlanStatus === 'review' && routeSketch && <>
             <label className="quick-draw-select">
               <span>Werkzeug</span>
               <select
@@ -1581,7 +1583,7 @@ export function ThreeDView({
             {routeCalculationBlockReason}
           </div>
         )}
-        <DraggableOverlayPanel
+        {!displayOnly && <DraggableOverlayPanel
           className="target-controls"
           ariaLabel="Missionsplanung und Solver-Navigation"
           draggable={false}
@@ -1939,7 +1941,7 @@ export function ThreeDView({
             </div>
           </details>
           </div>
-        </DraggableOverlayPanel>
+        </DraggableOverlayPanel>}
         {(plannedRoute || visibleMissionResult) && <div className="phase-legend" aria-label="Farblegende">
           <span className="inbound">Sonnensturz</span><span className="burn">Oberth</span><span className="sail">Electric Sail</span><span className="cruise">Deep Space</span>
         </div>}
@@ -2049,6 +2051,7 @@ export function ThreeDView({
         onVisualChange={setVisual}
         onDraftChange={(nextDraft) => { setDraft(nextDraft); abortActivePlayback('spacecraft-configuration-changed'); setRouteValidationPending(Boolean(plannedRoute)); setOptimizationPreflight(null); setDirectSolarRoute(null); setOptimizationResult(null); setRouteError(null) }}
         onApplyTrajectoryPlan={applyGenericTrajectoryPlan}
+        showTrajectoryPlanner={!displayOnly}
       />
       {visual.showScaleNotice && (
         <p className="floating-scale-note">Orbitale Darstellung: {visual.orbitScale} × √AE · Neigungen vertikal ×{visual.inclinationScale} · Körperradien proportional zueinander · Missionsbahn RK4 / N-Körper</p>

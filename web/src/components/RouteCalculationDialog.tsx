@@ -85,7 +85,7 @@ interface RouteCalculationDialogProps {
   onClose: () => void
   selectionMode?: boolean
   selectableCandidateIds?: string[]
-  onCandidateApply?: (candidateId: string) => void
+  onCandidateApply?: (candidateId: string, candidate?: RouteCalculationCandidateTrace) => void
 }
 
 const STAGE_NAMES: Record<string, string> = {
@@ -141,6 +141,17 @@ function candidateDeficit(candidate: RouteCalculationCandidateTrace) {
       + (candidate.targetCorrectionDeltaVKmS ?? 0)
       - candidate.availableInjectionDeltaVKmS,
   ) + (candidate.corridorInsertionDeficitKmS ?? 0)
+}
+
+function candidateCanBeApplied(candidate: RouteCalculationCandidateTrace) {
+  return (
+    candidate.fullCorridorCheck
+    && (
+      candidate.status === 'performance-valid'
+      || candidate.status === 'success'
+      || candidate.feasible === true
+    )
+  )
 }
 
 function routePath(points: Array<[number, number, number]> | undefined) {
@@ -795,7 +806,11 @@ export function RouteCalculationDialog({
   )
   const selectableIds = useMemo(() => new Set(selectableCandidateIds), [selectableCandidateIds])
   const selectedCandidateCanApply = Boolean(
-    selectedCandidate && selectableIds.has(selectedCandidate.id),
+    selectedCandidate
+      && (
+        selectableIds.has(selectedCandidate.id)
+        || (selectionMode && candidateCanBeApplied(selectedCandidate))
+      ),
   )
   const selectedRoutePath = routePath(selectedCandidate?.routePoints)
   const solvedCount = trace.candidates.filter((candidate) => candidate.status !== 'running').length
@@ -1120,7 +1135,7 @@ export function RouteCalculationDialog({
               <button
                 type="button"
                 disabled={trace.running || !selectedCandidateCanApply}
-                onClick={() => selectedCandidate && onCandidateApply?.(selectedCandidate.id)}
+                onClick={() => selectedCandidate && onCandidateApply?.(selectedCandidate.id, selectedCandidate)}
               >
                 Ausgewählte Route übernehmen
               </button>
