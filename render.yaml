@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: solar-system-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    disk:
+      name: solar-system-storage
+      mountPath: /app/storage
+      sizeGB: 1
+    envVars:
+      - key: SOLAR_SYSTEM_STORAGE_DIR
+        value: /app/storage
+      - key: SOLAR_API_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

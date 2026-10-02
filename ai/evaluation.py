@@ -17,8 +17,10 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ACTIVITY_LOG = PROJECT_ROOT / "logs" / "activities.jsonl"
-DEFAULT_MODEL_PATH = PROJECT_ROOT / "data" / "ml_candidate_ranker.json"
+from services.runtime_paths import DATA_DIRECTORY, LOG_DIRECTORY
+
+DEFAULT_ACTIVITY_LOG = LOG_DIRECTORY / "activities.jsonl"
+DEFAULT_MODEL_PATH = DATA_DIRECTORY / "ml_candidate_ranker.json"
 FEATURE_NAMES = [
     "geometricScore",
     "targetAlignmentDeg",

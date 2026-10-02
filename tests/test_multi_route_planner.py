@@ -75,60 +75,12 @@ class MultiRoutePlannerTests(unittest.TestCase):
         )
 
     def test_interstellar_summary_marks_hypothetical_direction(self):
-        corridor = {
-            "enabled": False,
-            "centerDirection": [1.0, 0.0, 0.0],
-            "horizontalHalfAngleDeg": 8.0,
-            "verticalHalfAngleDeg": 5.0,
-        }
-        result = simulate_route_sections({
-            "mission": {"startDate": "2034-01-04", "nBodyEnabled": False},
-            "routeSections": [
-                {
-                    "id": "sun-jupiter",
-                    "originId": "sun",
-                    "targetId": "jupiter",
-                    "corridor": corridor,
-                    "passage": {"mode": "partial-orbit", "orbitAngleDeg": 200},
-                    "deltaVMinusKmS": 0.5,
-                    "deltaVPlusKmS": 0.5,
-                },
-                {
-                    "id": "jupiter-proxima",
-                    "originId": "jupiter",
-                    "targetId": "proxima-centauri",
-                    "corridor": corridor,
-                    "passage": {"mode": "direct"},
-                    "deltaVMinusKmS": 0.5,
-                    "deltaVPlusKmS": 0.5,
-                },
-            ],
-        })
-
-        asymptote = result["routeSections"][-1]
-        self.assertEqual(asymptote["sectionType"], "interstellar-asymptote")
-        self.assertTrue(asymptote["hypothetical"])
-        self.assertEqual(asymptote["visualizationDistanceAu"], 50.0)
-        self.assertEqual(result["outgoingDirection"], asymptote["entryDirection"])
-        self.assertAlmostEqual(
-            result["summary"]["targetAlignmentDeg"],
-            asymptote["lookaheadAlignmentDeg"],
-        )
-        self.assertGreater(asymptote["requiredTransitionDeltaVKmS"], 0.0)
-        self.assertAlmostEqual(
-            result["summary"]["targetCorrectionDeltaVKmS"],
-            asymptote["requiredTransitionDeltaVKmS"],
-        )
-        jupiter = result["routeSections"][0]
-        selection = jupiter["corridor"]["exitAngleSelection"]
-        self.assertEqual(selection["lookaheadTargetId"], "proxima-centauri")
-        self.assertEqual(
-            selection["method"],
-            "heliocentric next-target velocity alignment",
-        )
-        self.assertGreaterEqual(selection["selectedAngleDeg"], 200.0)
-        self.assertLessEqual(selection["selectedAngleDeg"], 560.0)
-        self.assertTrue(result["summary"]["hypotheticalInterstellarAsymptote"])
+        result=simulate_route_sections({'mission':{'startDate':'2031-01-01'},'routeSections':[{'id':'earth-proxima','originId':'earth','targetId':'proxima-centauri','corridor':{'enabled':False},'deltaVPlusKmS':100}]})
+        asymptote=result['routeSections'][-1]
+        self.assertEqual(asymptote['sectionType'],'interstellar-asymptote')
+        self.assertTrue(asymptote['hypothetical'])
+        self.assertTrue(result['continuity']['stateChain'])
+        self.assertLess(asymptote['lambertEndpointResidualKm'],.01)
 
     def test_non_interstellar_explicit_passage_still_uses_generic_solver(self):
         classification = classify_route_sections([

@@ -8,9 +8,9 @@ const requestedSections = [
 ]
 const validResult = {
   trajectory: [
-    { elapsedDays: 0, positionKm: [1, 2, 3] },
-    { elapsedDays: 100, positionKm: [4, 5, 6] },
-    { elapsedDays: 200, positionKm: [7, 8, 9] },
+    { elapsedDays: 0, velocityKmS: [0, 1, 0], positionKm: [1, 2, 3] },
+    { elapsedDays: 100, velocityKmS: [0, 1, 0], positionKm: [4, 5, 6] },
+    { elapsedDays: 200, velocityKmS: [0, 1, 0], positionKm: [7, 8, 9] },
   ],
   routeSections: [
     {
@@ -20,7 +20,7 @@ const validResult = {
       entryIndex: 0,
       periapsisIndex: 1,
       exitIndex: 1,
-      lambertEndpointResidualKm: 0.2,
+      targetConditionSatisfied: true, lambertEndpointResidualKm: 0.2,
       corridor: { entryInsideCorridor: true },
     },
     {
@@ -30,7 +30,7 @@ const validResult = {
       entryIndex: 1,
       periapsisIndex: 2,
       exitIndex: 2,
-      lambertEndpointResidualKm: 0.4,
+      targetConditionSatisfied: true, lambertEndpointResidualKm: 0.4,
       corridor: { entryInsideCorridor: true },
     },
   ],
@@ -57,3 +57,7 @@ const reversedTime = {
 assert.equal(validateRouteGeometry(requestedSections, reversedTime, true).valid, false)
 
 console.log('route geometry validation: ok')
+
+assert.equal(validateRouteGeometry(requestedSections, {...validResult, stateChain: undefined}, true).valid, false)
+assert.equal(validateRouteGeometry(requestedSections, {...validResult, validation: undefined}, true).valid, false)
+assert.equal(validateRouteGeometry(requestedSections, {...validResult, trajectory: validResult.trajectory.map(({velocityKmS,...p}) => p)}, true).valid, false)

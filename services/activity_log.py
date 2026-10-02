@@ -12,8 +12,9 @@ from threading import Lock
 from uuid import uuid4
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ACTIVITY_LOG = PROJECT_ROOT / "logs" / "activities.jsonl"
+from services.runtime_paths import LOG_DIRECTORY
+
+ACTIVITY_LOG = LOG_DIRECTORY / "activities.jsonl"
 _WRITE_LOCK = Lock()
 _MAX_TEXT_LENGTH = 2_000
 

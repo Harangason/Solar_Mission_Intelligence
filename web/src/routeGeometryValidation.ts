@@ -3,6 +3,7 @@ import type { RouteSectionDefinition } from './routeSections'
 interface GeometryTrajectoryPoint {
   elapsedDays: number
   positionKm: [number, number, number]
+  velocityKmS?: [number, number, number]
 }
 
 interface GeometryRouteSection {
@@ -13,6 +14,7 @@ interface GeometryRouteSection {
   periapsisIndex: number
   exitIndex: number
   lambertEndpointResidualKm?: number
+  targetConditionSatisfied?: boolean
   corridor: {
     entryInsideCorridor: boolean
   }
@@ -69,6 +71,7 @@ export function validateRouteGeometry(
     trajectory.length >= 2
     && trajectory.every((point) => (
       Number.isFinite(point.elapsedDays) && finiteVector(point.positionKm)
+      && point.velocityKmS !== undefined && finiteVector(point.velocityKmS)
     ))
   )
   const monotonicTime = trajectory.every((point, index) => (
@@ -84,8 +87,8 @@ export function validateRouteGeometry(
     && section.exitIndex < trajectory.length
   ))
   const stateContinuous = (
-    result.stateChain?.continuousPosition !== false
-    && result.stateChain?.exitStateFeedsNextSection !== false
+    result.stateChain?.continuousPosition === true
+    && result.stateChain?.exitStateFeedsNextSection === true
   )
   const endpointResiduals = calculatedSections.map(
     (section) => section.lambertEndpointResidualKm ?? Number.POSITIVE_INFINITY,
@@ -98,8 +101,9 @@ export function validateRouteGeometry(
     && endpointResiduals.every((residual) => (
       Number.isFinite(residual) && residual <= ENDPOINT_TOLERANCE_KM
     ))
+    && calculatedSections.every((section) => section.targetConditionSatisfied === true)
   )
-  const collisionFree = result.validation?.collisionFree !== false
+  const collisionFree = result.validation?.collisionFree === true
   const corridorsSatisfied = calculatedSections.every(
     (section) => section.corridor.entryInsideCorridor,
   )

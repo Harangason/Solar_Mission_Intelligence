@@ -7,7 +7,7 @@ the configured meta-kernel is furnished exactly once per process.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 import os
 from pathlib import Path
@@ -32,6 +32,14 @@ VALID_MODES = {"auto", "kepler", "spice"}
 # compact DE440s kernel contains barycenters for several planetary systems, so
 # each center has a barycenter fallback.
 SPICE_TARGETS: dict[str, tuple[str, ...]] = {
+    "sun": ("SUN",),
+    "earth-moon": ("MOON",),
+    "mars-phobos": ("PHOBOS",), "mars-deimos": ("DEIMOS",),
+    "jupiter-io": ("IO",), "jupiter-europa": ("EUROPA",),
+    "jupiter-ganymede": ("GANYMEDE",), "jupiter-callisto": ("CALLISTO",),
+    "saturn-titan": ("TITAN",), "saturn-enceladus": ("ENCELADUS",),
+    "uranus-titania": ("TITANIA",), "uranus-oberon": ("OBERON",),
+    "neptune-triton": ("TRITON",),
     "mercury": ("MERCURY", "MERCURY BARYCENTER"),
     "venus": ("VENUS", "VENUS BARYCENTER"),
     "earth": ("EARTH", "EARTH BARYCENTER"),
@@ -122,6 +130,7 @@ class SpiceEphemeris:
         """Convert an aware UTC datetime to SPICE ephemeris seconds past J2000."""
         if not self.ensure_loaded():
             return None
+        timestamp = timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp.astimezone(timezone.utc)
         utc = timestamp.strftime("%Y-%m-%d %H:%M:%S.%f UTC")
         with self._lock:
             try:
@@ -202,3 +211,28 @@ def planet_state(
 
 def get_ephemeris_status() -> dict[str, Any]:
     return EPHEMERIS.status()
+
+
+def body_gm(body_id: str) -> float | None:
+    """Kernel constants are the canonical GM source, in km^3/s^2."""
+    if not EPHEMERIS.ensure_loaded() or body_id not in SPICE_TARGETS:
+        return None
+    with EPHEMERIS._lock:
+        try:
+            _, values = _spice.bodvrd(SPICE_TARGETS[body_id][0], "GM", 1)
+            return float(values[0])
+        except SpiceyError:
+            return None
+
+
+def body_quality(body_id: str, epoch_seconds: float) -> dict:
+    if body_id == "sun":
+        return {"available": True, "centerExact": True, "backend": "origin"}
+    if not EPHEMERIS.ensure_loaded() or body_id not in SPICE_TARGETS:
+        return {"available": False, "centerExact": False, "backend": "mean-elements"}
+    try:
+        _, resolved = EPHEMERIS.state(body_id, epoch_seconds)
+    except (ValueError, RuntimeError):
+        return {"available": False, "centerExact": False, "backend": "unavailable"}
+    return {"available": True, "centerExact": "BARYCENTER" not in resolved,
+            "backend": "spice", "resolvedTarget": resolved}

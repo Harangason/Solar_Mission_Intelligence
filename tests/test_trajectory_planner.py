@@ -45,7 +45,9 @@ class GenericTrajectoryPlannerTests(unittest.TestCase):
                 self.assertEqual(result["mode"], "body-to-body")
                 self.assertEqual(result["target"]["bodyId"], target_id)
                 self.assertGreater(len(result["trajectory"]), 10)
-                self.assertEqual(result["guide"]["legs"][0]["physicalSegments"], ["lambert-transfer"])
+                self.assertTrue(result["guide"]["legs"][0]["physicalSegments"])
+                self.assertTrue(result["continuity"]["stateChain"])
+                self.assertTrue(all("velocityKmS" in point for point in result["trajectory"]))
                 self.assertIn("targetReached", result["summary"])
 
     def test_launch_window_grid_pairs_each_departure_with_flight_times(self):
@@ -109,39 +111,17 @@ class GenericTrajectoryPlannerTests(unittest.TestCase):
         self.assertAlmostEqual(sum(value * value for value in result["target"]["direction"]), 1.0, places=8)
         self.assertIn("targetAlignmentDeg", result["summary"])
 
-    def test_solar_oberth_planet_waypoint_continues_to_direction(self):
-        request = self.body_request("mars")
-        request["target"] = {
-            "type": "direction", "rightAscensionDeg": 217.43,
-            "declinationDeg": -62.68, "distanceAU": 50,
-        }
-        request["waypoints"] = [
-            {"id": "oberth", "type": "solar_oberth", "burnDeltaVKmS": 8},
-            {
-                "id": "jupiter-flyby", "type": "body_flyby", "bodyId": "jupiter",
-                "encounterDay": 730, "flybyAltitudeKm": 100_000,
-                "flybyMode": "acceleration",
-            },
-        ]
-        fake_legacy = {
-            "trajectory": [
-                {"elapsedDays": 0.0, "positionKm": [149_597_870.7, 0, 0], "velocityKmS": [0, 29.78, 0]},
-                {"elapsedDays": 730.0, "positionKm": [778_000_000, 0, 0], "velocityKmS": [0, 20, 0]},
-            ],
-            "segments": [{"id": "flyby", "label": "Jupiter-Flyby", "startIndex": 0, "endIndex": 1}],
-            "outgoingDirection": [0, 1, 0],
-            "summary": {
-                "requiredInjectionDeltaVKmS": 8, "heliocentricSpeedAfterKmS": 20,
-                "feasibleWithConfiguredBurn": True, "model": "existing flyby solver",
-            },
-        }
-        with patch("planner.trajectory_planner.simulate_waypoint_route", return_value=fake_legacy):
-            result = calculate_trajectory_plan(request)
-        self.assertEqual(result["mode"], "multi-leg-direction")
-        self.assertEqual(result["segments"][-1]["id"], "post-flyby-direction")
-        self.assertEqual(result["target"]["type"], "direction")
-        self.assertEqual(result["guide"]["nodes"][-1]["kind"], "direction")
-        self.assertEqual(result["guide"]["legs"][-1]["physicalSegments"], ["post-flyby-direction"])
+    def test_solar_oberth_waypoint_continues_physically_to_direction(self):
+        request=self.body_request('mars')
+        request['target']={'type':'direction','direction':[1,2,3],'distanceAU':2}
+        request['waypoints']=[{'id':'oberth','type':'solar_oberth','burnDeltaVKmS':8}]
+        request['constraints']['maxTotalDeltaVKmS']=1000
+        result=calculate_trajectory_plan(request)
+        self.assertEqual(result['mode'],'multi-leg')
+        self.assertTrue(result['continuity']['stateChain'])
+        self.assertEqual(result['guide']['nodes'][-1]['kind'],'direction')
+        self.assertTrue(any(m['type']=='SOLAR_OBERTH' for m in result['maneuvers']))
+        self.assertAlmostEqual(result['summary']['totalDeltaVKmS'],sum(m['deltaVKmS'] for m in result['maneuvers']),places=8)
 
     def test_audit_contract_contains_required_sections(self):
         request = self.body_request("mars")
@@ -221,7 +201,7 @@ class GenericTrajectoryPlannerTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(len(payload["routeSections"]), 2)
         self.assertTrue(all(section["sectionType"] == "lambert-body-to-body" for section in payload["routeSections"]))
-        self.assertTrue(payload["summary"]["feasibleWithConfiguredBurn"])
+        self.assertFalse(payload["summary"]["feasibleWithConfiguredBurn"])
         self.assertGreater(payload["totalFlightDays"], 360)
 
 

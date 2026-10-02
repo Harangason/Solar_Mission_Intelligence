@@ -1,0 +1,31 @@
+{
+  "launchSiteId": "ksc-lc39a",
+  "launchDateTime": "2031-01-01T12:00:00Z",
+  "payloadMassKg": 1000,
+  "targetOrbitAltitudeKm": 200,
+  "targetOrbitInclinationDeg": 28.608422,
+  "launchAzimuthDeg": 90,
+  "launchVehicle": {
+    "name": "Reference design - not a certified vehicle",
+    "stages": [
+      {
+        "id": "first",
+        "dryMassKg": 25000,
+        "propellantMassKg": 400000,
+        "thrustSeaLevelN": 7600000,
+        "thrustVacuumN": 8200000,
+        "specificImpulseSeaLevelS": 285,
+        "specificImpulseVacuumS": 310,
+        "referenceAreaM2": 12
+      },
+      {
+        "id": "upper",
+        "dryMassKg": 5000,
+        "propellantMassKg": 100000,
+        "thrustVacuumN": 1100000,
+        "specificImpulseVacuumS": 350,
+        "referenceAreaM2": 12
+      }
+    ]
+  }
+}

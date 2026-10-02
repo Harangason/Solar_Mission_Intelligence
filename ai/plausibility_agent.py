@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Callable
 from uuid import uuid4
 
 from .audit_log import write_ai_audit
-from .interaction_agent import DEFAULT_MODEL, _call_responses_api, _extract_output_text
+from .interaction_agent import configured_model, _call_responses_api, _extract_output_text
 from .schemas import SCHEMA_VERSION, validate_ai_payload
 
 
@@ -282,7 +281,7 @@ def generate_plausibility_check(
 
     ui_state = payload.get("uiState") if isinstance(payload.get("uiState"), dict) else {}
     guardrail_findings = _deterministic_findings(solver_result, ui_state)
-    model = os.getenv("OPENAI_PLAUSIBILITY_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    model = configured_model("plausibility")
     context = {
         "missionState": mission_state,
         "solverResult": solver_result,

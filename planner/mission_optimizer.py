@@ -716,6 +716,8 @@ def optimize_launch_window(values: dict | None) -> dict:
                 geometry_reasons.append("Lambert-/SOI-Geschwindigkeitsrest über 10 m/s")
             if float(geometry.get("periapsisRadiusKm", 0.0)) <= float(geometry.get("planetRadiusKm", 0.0)):
                 geometry_reasons.append("Vorbeiflug schneidet den Körper")
+            if candidate_route.get('schemaVersion')=='2.0':
+                geometry_reasons,energy_reasons=_physical_route_reasons(candidate_route)
             reasons = [*geometry_reasons, *energy_reasons]
             geometry_plausible = not geometry_reasons
             plausible = geometry_plausible and not energy_reasons and bool(summary["feasibleWithConfiguredBurn"])
@@ -738,6 +740,8 @@ def optimize_launch_window(values: dict | None) -> dict:
                 + float(transitions.get("lambertPropagationEndpointResidualKm", 0.0)) * 0.01
                 + duration_penalty
             )
+            if candidate_route.get('schemaVersion')=='2.0':
+                full_score=float(summary['totalDeltaVKmS'])+duration_penalty+float(summary['targetAlignmentDeg'])*100+(0 if plausible else 100000)
             validation = {
                 "rank": rank,
                 "role": "optimized-candidate",
@@ -836,13 +840,7 @@ def optimize_launch_window(values: dict | None) -> dict:
         + (0 if direct_feasible else 1_000)
     )
     recommended_alternative = "gravityAssist" if gravity_quality <= direct_quality else "directSolar"
-    model_note = (
-        "Bidirektionale 3D-Randwertsuche: Startdatum, Begegnungstag und Suchhorizont werden mit "
-        "100-, 10-, 5- und 1-Tagesrastern angenähert. Vorwärts läuft Lambert vom Sonnenmanöver "
-        "zum bewegten Planeten, rückwärts die Zielasymptote zum Jupiter-Austritt. Kompatible "
-        "JSONL-Läufe liefern empirische Startbecken; DOP853, SOI-Hyperbel und Kalman-Modell "
-        "validieren die besten Kandidaten."
-    )
+    model_note = ('Die schnelle Rastersuche liefert Kandidaten. Die Vollprüfung verwendet den gemeinsamen physikalischen Planner mit vollständiger Zustandskette, Kollisionsprüfung und Gesamtbudget. Die Suche beweist kein globales Optimum.')
     stop_reason = (
         "plausible-route-found"
         if full_plausible
@@ -990,3 +988,17 @@ def optimize_launch_window(values: dict | None) -> dict:
             },
         },
     }
+
+
+def _physical_route_reasons(route):
+    """Use measured common-planner evidence, never obsolete adapter fields."""
+    validation=route.get('validation') or {};summary=route.get('summary') or {}
+    geometry=[];energy=[]
+    for key in ('collisionFree','stateContinuous','targetReached','ephemeridesValidated'):
+        if validation.get(key) is not True:geometry.append(f'{key}: physikalischer Nachweis fehlt oder ist nicht erfüllt')
+    if summary.get('targetAlignmentDeg') is not None and summary['targetAlignmentDeg']>.01:geometry.append('Zielasymptote verfehlt')
+    if not summary.get('vehicleValidated') or summary.get('vehicleFeasible') is not True:energy.append('Fahrzeug-/Treibstoffnachweis nicht erfüllt')
+    if not validation.get('constraintsSatisfied'):energy.append('Missionsgrenzen nicht erfüllt')
+    if route.get('solarBoundary') and not route['solarBoundary'].get('speedBoundaryReached'):energy.append('Solar-Austrittsgeschwindigkeit nicht erfüllt')
+    if not summary.get('feasibleWithConfiguredBurn',summary.get('feasible')) and not geometry and not energy:energy.append('Mission nicht durchgängig durchführbar')
+    return geometry,energy

@@ -61,12 +61,26 @@ def continuous_n_body_acceleration(
                 f"N-Körper-Beschleunigung ist am Ort von {ephemeris[0]!r} singulär."
             )
 
-        planet_mu = G_KM3_KG_S2 * float(ephemeris[1])
+        from solver.ephemeris import body_gm
+        planet_mu = body_gm(ephemeris[0]) or G_KM3_KG_S2 * float(ephemeris[1])
         acceleration += planet_mu * (
             relative / separation**3
             - planet_position / planet_radius**3
         )
 
+    # Natural satellites are separate gravitating centers; a planet's GM
+    # denotes its center, rather than the whole planet/satellite barycenter.
+    from solver.ephemeris import EPHEMERIS
+    for body_id in ('earth-moon','mars-phobos','mars-deimos','jupiter-io','jupiter-europa','jupiter-ganymede','jupiter-callisto','saturn-titan','saturn-enceladus','uranus-titania','uranus-oberon','neptune-triton'):
+        mu=body_gm(body_id)
+        if not mu:continue
+        try:resolved=EPHEMERIS.state(body_id,days_since_j2000*DAY_SECONDS)
+        except (ValueError,RuntimeError):continue
+        if resolved is None:continue
+        body_position=np.asarray(resolved[0][:3]);relative=body_position-position
+        separation=_norm(relative);center_radius=_norm(body_position)
+        if separation==0:raise RuntimeError(f'Gravitationszentrum {body_id} erreicht.')
+        acceleration+=mu*(relative/separation**3-body_position/center_radius**3)
     return tuple(float(value) for value in acceleration)  # type: ignore[return-value]
 
 
@@ -367,3 +381,57 @@ def validate_continuous_waypoint_route(
         ),
         "trajectory": trajectory,
     }
+
+
+def propagate_conic(initial_state, duration_seconds, mu, *, sample_count=180,
+                    stop_radius_km=None, crossing_direction=0, stop_periapsis=False,
+                    collision_radius_km=0.0, gravity_acceleration=None, other_collisions=None, stop_aphelion=False):
+    """Event-resolved two-body propagation shared by local and Lambert arcs."""
+    initial = np.asarray((*initial_state[0], *initial_state[1]), dtype=float)
+    if initial.shape != (6,) or not np.isfinite(initial).all() or mu <= 0 or duration_seconds <= 0:
+        raise ValueError("Ungültiger Propagationszustand, GM oder Zeitraum.")
+    def derivative(t, y):
+        radius = float(np.linalg.norm(y[:3]))
+        if radius <= 0:
+            raise RuntimeError("Gravitationszentrum erreicht.")
+        acceleration=gravity_acceleration(t,y) if gravity_acceleration else -mu*y[:3]/radius**3
+        return np.r_[y[3:],acceleration]
+    events=[]; names=[]
+    if stop_radius_km is not None:
+        def crossing(t,y):
+            return float(np.linalg.norm(y[:3])) - stop_radius_km
+        crossing.direction=crossing_direction; crossing.terminal=True
+        events.append(crossing); names.append("radius-crossing")
+    if stop_periapsis:
+        def periapsis(t,y):
+            return float(np.dot(y[:3],y[3:]))
+        periapsis.direction=1; periapsis.terminal=True
+        events.append(periapsis); names.append("periapsis")
+    if stop_aphelion:
+        def aphelion(t,y):return float(np.dot(y[:3],y[3:]))
+        aphelion.direction=-1;aphelion.terminal=True
+        events.append(aphelion);names.append('aphelion')
+    if collision_radius_km:
+        def collision(t,y):
+            return float(np.linalg.norm(y[:3]))-collision_radius_km
+        collision.direction=-1; collision.terminal=True
+        events.append(collision); names.append("collision")
+    for collision_name,callback in other_collisions or []:
+        callback.direction=-1;callback.terminal=True
+        events.append(callback);names.append('collision:'+collision_name)
+    local_scale=np.sqrt(np.linalg.norm(initial[:3])**3/mu)
+    solution=solve_ivp(derivative,(0.,duration_seconds),initial,method="DOP853",
+                       rtol=2e-11,atol=[1e-6]*3+[1e-11]*3,dense_output=True,
+                       max_step=max(1.,duration_seconds/120),
+                       events=events or None)
+    if not solution.success:
+        raise RuntimeError(solution.message)
+    end=float(solution.t[-1]); times=np.linspace(0.,end,max(2,sample_count+1))
+    samples=solution.sol(times)
+    emitted=[{"elapsedSeconds":float(t),"positionKm":samples[:3,i].tolist(),
+              "velocityKmS":samples[3:,i].tolist()} for i,t in enumerate(times)]
+    found=[{"type":names[i],"elapsedSeconds":float(t),"state":solution.y_events[i][j].tolist()}
+           for i,values in enumerate(solution.t_events or []) for j,t in enumerate(values)]
+    return {"trajectory":emitted,"durationSeconds":end,"events":found,
+            "finalPositionKm":samples[:3,-1].tolist(),"finalVelocityKmS":samples[3:,-1].tolist(),
+            "collision":any(e["type"].startswith("collision") for e in found),"successful":True}

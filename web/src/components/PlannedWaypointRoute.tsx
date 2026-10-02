@@ -31,6 +31,10 @@ function RouteSectionStateLabel({ children, title }: { children: ReactNode; titl
 }
 
 export interface WaypointRouteResult {
+  schemaVersion?: string
+  stateChain?: { continuousPosition: boolean; exitStateFeedsNextSection: boolean; checks?: unknown[] }
+  bodyEphemerides?: import('../types').BodyEphemerides
+  genericTrajectoryPlan?: import('../types').GenericTrajectoryPlannerResult
   calculationPersistence?: {
     runId: string
     variantId: string
@@ -214,7 +218,7 @@ export interface WaypointRouteResult {
     exitDay: number
     entryPositionKm: [number, number, number]
     entryDirection: [number, number, number]
-    entryLatitudeDeg: number
+    entryLatitudeDeg?: number
     minimumAltitudeKm: number
     requiredTransitionDeltaVKmS: number
     availableTransitionDeltaVKmS?: number
@@ -223,7 +227,8 @@ export interface WaypointRouteResult {
     departureDirectionChangeDeg?: number
     backtracksFromOuterTarget?: boolean
     transferDurationDays?: number
-    corridorInsertionDeltaVKmS: number
+    corridorInsertionDeltaVKmS?: number
+    requiredPassageDeltaVKmS?: number
     entryVelocityPreserved?: boolean
     lookaheadTargetId?: string | null
     lookaheadAlignmentDeg?: number
@@ -577,6 +582,7 @@ export function PlannedWaypointRoute({ route, orbitScale, inclinationScale, elap
         const periapsis = points[section.periapsisIndex]
         const exit = points[section.exitIndex]
         const followingTargetName = route.routeSections?.[index + 1]?.targetName
+        const entryLatitudeDeg = section.entryLatitudeDeg ?? Math.atan2(section.entryDirection[2], Math.hypot(section.entryDirection[0], section.entryDirection[1])) * 180 / Math.PI
         if (!entry || !periapsis || !exit) return null
         const sectionLabel = `${String(index + 1).padStart(2, '0')} · ${section.targetName}-Eintritt`
         const initialOffset: [number, number] = index % 2 === 0
@@ -604,17 +610,16 @@ export function PlannedWaypointRoute({ route, orbitScale, inclinationScale, elap
             >
               <RouteSectionStateLabel title={sectionLabel}>
                 <small>
-                  Breite {section.entryLatitudeDeg >= 0 ? '+' : ''}{section.entryLatitudeDeg.toFixed(1)}° ·
+                  Breite {entryLatitudeDeg >= 0 ? '+' : ''}{entryLatitudeDeg.toFixed(1)}° ·
                   Korridor {section.corridor.entryInsideCorridor ? 'getroffen' : 'verfehlt'}
                 </small>
                 <small>
                   Übergang Δv {section.requiredTransitionDeltaVKmS.toFixed(2)} km/s ·
-                  Einschuss {section.corridorInsertionDeltaVKmS.toFixed(2)} km/s
+                  {section.corridorInsertionDeltaVKmS == null ? 'Passage' : 'Einschuss'} {(section.corridorInsertionDeltaVKmS ?? section.requiredPassageDeltaVKmS)?.toFixed(2) ?? '–'} km/s
                 </small>
                 {followingTargetName && (
                   <small>
-                    Fly-by auf {followingTargetName} vorausgerichtet ·
-                    Restwinkel {(section.lookaheadAlignmentDeg ?? 0).toFixed(1)}°
+                    {section.lookaheadAlignmentDeg == null ? `Folgeabschnitt: ${followingTargetName}` : `Fly-by auf ${followingTargetName} vorausgerichtet · Restwinkel ${section.lookaheadAlignmentDeg.toFixed(1)}°`}
                   </small>
                 )}
               </RouteSectionStateLabel>
@@ -645,8 +650,13 @@ export function PlannedWaypointRoute({ route, orbitScale, inclinationScale, elap
         <DraggableInfoLabel initialOffset={[32, 28]} label={`${route.waypoint.name} am Begegnungstag`} onDragChange={onInfoDragChange}>
           <span className="interstellar-label flyby-label compact-flyby-label">
             <strong>{route.waypoint.name} · Begegnung Tag {route.waypoint.encounterDay.toFixed(1)}</strong>
+            {route.genericTrajectoryPlan ? <>
+              <small>Ziel {route.genericTrajectoryPlan.target.type} · {route.genericTrajectoryPlan.summary.targetReached ? 'erreicht' : 'nicht erreicht'} · Gesamt-Δv {(route.genericTrajectoryPlan.summary.totalDeltaVKmS ?? 0).toFixed(2)} km/s</small>
+              <small>{route.genericTrajectoryPlan.summary.status} · Fahrzeugnachweis {route.genericTrajectoryPlan.summary.vehicleValidated ? (route.genericTrajectoryPlan.summary.vehicleFeasible ? 'erfüllt' : 'nicht erfüllt') : 'nicht konfiguriert'}</small>
+            </> : <>
             <small>Perizentrum {(route.waypoint.flybyAltitudeKm).toLocaleString('de-DE', { maximumFractionDigits: 0 })} km · Kurs {(route.summary.courseChangeDeg ?? 0).toFixed(1)}° · Gewinn {route.summary.speedGainKmS >= 0 ? '+' : ''}{route.summary.speedGainKmS.toFixed(2)} km/s</small>
             <small>Unverdeckte Hyperbel im Flyby-Fokus · Zielimpuls Δv {(route.summary.targetCorrectionDeltaVKmS ?? 0).toFixed(2)} km/s</small>
+            </>}
             {route.flybyGeometry?.aimpoint?.absolutePositionKm && (
               <small>
                 Aimpoint {(route.flybyGeometry?.aimpoint?.role ?? 'periapsis')} · Höhe {(route.flybyGeometry?.aimpoint?.altitudeKm ?? route.waypoint.flybyAltitudeKm).toLocaleString('de-DE', { maximumFractionDigits: 0 })} km

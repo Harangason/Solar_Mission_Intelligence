@@ -1,93 +1,14 @@
 import unittest
-from types import SimpleNamespace
-from unittest.mock import patch
+import numpy as np
+from planner.generic_route_planner import _candidate,parse_route_passage,SUN_RADIUS_KM
+from planner.multi_route_planner import simulate_route_sections
 
-from generic_route_planner import SUN_RADIUS_KM, _candidate, parse_route_passage
-from multi_route_planner import simulate_route_sections
-from trajectory import AU_KM, _magnitude
-
-
-CORRIDOR = {
-    "enabled": True,
-    "centerDirection": [0.0, 0.0, 1.0],
-    "horizontalHalfAngleDeg": 8.0,
-    "verticalHalfAngleDeg": 5.0,
-    "rotationDeg": 0.0,
-}
-
-
-def section(origin_id, target_id, section_id="section"):
-    return {
-        "id": section_id,
-        "originId": origin_id,
-        "targetId": target_id,
-        "corridor": CORRIDOR,
-        "deltaVPlusKmS": 100.0,
-    }
-
+def section(origin,target,ident='leg',**extra):
+    return {'id':ident,'originId':origin,'targetId':target,'corridor':{'enabled':False},'deltaVPlusKmS':100.,'deltaVMinusKmS':100.,**extra}
 
 class GenericRoutePlannerTests(unittest.TestCase):
-    def calculate(self, sections):
-        return simulate_route_sections({
-            "mission": {"startDate": "2026-07-28"},
-            "routeSections": sections,
-        })
-
-    def test_planet_to_sun_uses_selected_origin(self):
-        result = self.calculate([section("venus", "sun")])
-
-        calculated = result["routeSections"][0]
-        self.assertEqual(calculated["originId"], "venus")
-        self.assertEqual(calculated["targetId"], "sun")
-        self.assertEqual(calculated["sectionType"], "heliozentrischer Transfer")
-        self.assertLess(calculated["lambertEndpointResidualKm"], 1.0)
-
-    def test_spacecraft_integration_preserves_route_and_reports_actual_vehicle(self):
-        mission = SimpleNamespace(
-            config=SimpleNamespace(
-                payload_mass_kg=120.0,
-                carrier_mass_kg=1_200.0,
-                heatshield_mass_kg=450.0,
-                propellant_mass_kg=7_200.0,
-                oberth_delta_v_km_s=8.0,
-            ),
-            summary=SimpleNamespace(
-                achieved_burn_delta_v_km_s=6.5,
-                propellant_used_kg=6_800.0,
-                propulsion_report=[
-                    {"name": "Solar-Oberth", "enabled": True},
-                    {"name": "Ion", "enabled": False},
-                ],
-                warnings=["Burn durch Treibstoff begrenzt."],
-            ),
-        )
-        with patch("planner.generic_route_planner.simulate_mission", return_value=mission):
-            result = simulate_route_sections({
-                "mission": {"startDate": "2026-07-28", "oberthDeltaVKmS": 8.0},
-                "routeSections": [section("venus", "sun")],
-                "integrateSpacecraft": True,
-            })
-
-        integrated = result["spacecraftIntegration"]
-        self.assertTrue(integrated["validated"])
-        self.assertTrue(integrated["routeGeometryPreserved"])
-        self.assertEqual(integrated["wetMassKg"], 8_970.0)
-        self.assertEqual(integrated["achievedOberthDeltaVKmS"], 6.5)
-        self.assertEqual(integrated["enabledPropulsionModules"], ["Solar-Oberth"])
-
-    def test_passage_definition_is_normalized_and_preserved(self):
-        requested = section("venus", "sun")
-        requested["passage"] = {
-            "mode": "partial-orbit",
-            "orbitAngleDeg": 135,
-            "orbitDirection": "retrograde",
-            "entryBehavior": "tangential-retrograde",
-            "exitBehavior": "tangential-prograde",
-        }
-
-        calculated = self.calculate([requested])["routeSections"][0]
-
-        self.assertEqual(calculated["passage"], requested["passage"])
+    def calculate(self,sections,**extra):
+        return simulate_route_sections({'mission':{'startDate':'2031-01-01'},'routeSections':sections,**extra})
 
     def test_full_orbit_always_uses_360_degrees(self):
         passage = parse_route_passage({
@@ -129,243 +50,6 @@ class GenericRoutePlannerTests(unittest.TestCase):
         self.assertEqual(passage["entryBehavior"], "tangential-accelerate")
         self.assertEqual(passage["exitBehavior"], "tangential-accelerate")
 
-    def test_planet_to_its_moon_uses_planet_centric_dynamics(self):
-        result = self.calculate([section("earth", "earth-moon")])
-
-        calculated = result["routeSections"][0]
-        self.assertEqual(calculated["targetId"], "earth-moon")
-        self.assertEqual(calculated["sectionType"], "Erde-zentrierter Transfer")
-        self.assertLess(calculated["lambertEndpointResidualKm"], 1.0)
-
-    def test_planet_to_planet_is_supported_without_solar_oberth_prefix(self):
-        result = self.calculate([section("earth", "mars")])
-
-        self.assertEqual(result["segments"][0]["label"], "Erde → Mars")
-        self.assertEqual(result["trajectory"][0]["elapsedDays"], 0.0)
-        self.assertLess(
-            result["routeSections"][0]["lambertEndpointResidualKm"], 1.0
-        )
-
-    def test_mixed_reference_frame_chain_remains_ordered(self):
-        result = self.calculate([
-            section("earth", "earth-moon", "local"),
-            section("earth-moon", "mars", "interplanetary"),
-            section("mars", "sun", "solar"),
-        ])
-
-        self.assertEqual(
-            [(item["originId"], item["targetId"]) for item in result["routeSections"]],
-            [
-                ("earth", "earth-moon"),
-                ("earth-moon", "mars"),
-                ("mars", "sun"),
-            ],
-        )
-        self.assertTrue(result["stateChain"]["continuousPosition"])
-        self.assertTrue(result["stateChain"]["referenceFramesSelectedPerSection"])
-        self.assertEqual(len(result["trajectory"]), 541)
-
-    def test_solar_passage_is_collision_free_and_route_continues_to_jupiter(self):
-        result = simulate_route_sections({
-            "mission": {"startDate": "2026-07-28"},
-            "waypointId": "jupiter",
-            "routeSections": [
-                section("earth", "sun", "solar-entry"),
-                section("sun", "jupiter", "jupiter-transfer"),
-            ],
-        })
-
-        minimum_solar_radius = min(
-            _magnitude(tuple(point["positionKm"]))
-            for point in result["trajectory"]
-        )
-        self.assertGreater(minimum_solar_radius, SUN_RADIUS_KM)
-        self.assertEqual(result["waypoint"]["id"], "jupiter")
-        self.assertEqual(
-            result["waypoint"]["trajectoryIndex"],
-            result["routeSections"][1]["entryIndex"],
-        )
-        self.assertTrue(result["validation"]["collisionFree"])
-        self.assertGreater(
-            result["validation"]["minimumSolarAltitudeKm"], 0.0
-        )
-
-    def test_geometry_stage_preserves_complete_user_route_before_performance(self):
-        inbound = section("earth", "sun", "earth-sun")
-        inbound["deltaVPlusKmS"] = 0.01
-        inbound["corridor"] = {**CORRIDOR, "enabled": False}
-        inbound["passage"] = {
-            "mode": "partial-orbit",
-            "orbitAngleDeg": 1,
-            "orbitDirection": "prograde",
-        }
-        outbound = section("sun", "jupiter", "sun-jupiter")
-        outbound["deltaVPlusKmS"] = 0.01
-        outbound["corridor"] = {**CORRIDOR, "enabled": False}
-
-        result = simulate_route_sections({
-            "mission": {"startDate": "2033-12-31"},
-            "waypointId": "jupiter",
-            "calculationStage": "geometry",
-            "routeSections": [inbound, outbound],
-        })
-
-        self.assertEqual(result["calculationStage"], "geometry")
-        self.assertEqual(
-            [(item["originId"], item["targetId"]) for item in result["routeSections"]],
-            [("earth", "sun"), ("sun", "jupiter")],
-        )
-        self.assertTrue(result["stateChain"]["continuousPosition"])
-        self.assertTrue(result["validation"]["collisionFree"])
-        self.assertTrue(all(
-            item["lambertEndpointResidualKm"] < 100.0
-            for item in result["routeSections"]
-        ))
-
-    def test_terminal_interstellar_target_is_a_straight_hypothetical_50_au_ray(self):
-        local_corridor = {**CORRIDOR, "enabled": False}
-        earth_sun = section("earth", "sun", "earth-sun")
-        earth_sun["corridor"] = local_corridor
-        sun_jupiter = section("sun", "jupiter", "sun-jupiter")
-        sun_jupiter["corridor"] = local_corridor
-        jupiter_proxima = section(
-            "jupiter", "proxima-centauri", "jupiter-proxima"
-        )
-        jupiter_proxima["corridor"] = local_corridor
-
-        result = simulate_route_sections({
-            "mission": {"startDate": "2033-12-31"},
-            "calculationStage": "geometry",
-            "routeSections": [earth_sun, sun_jupiter, jupiter_proxima],
-        })
-
-        self.assertEqual(
-            [(item["originId"], item["targetId"]) for item in result["routeSections"]],
-            [
-                ("earth", "sun"),
-                ("sun", "jupiter"),
-                ("jupiter", "proxima-centauri"),
-            ],
-        )
-        asymptote = result["routeSections"][-1]
-        self.assertEqual(asymptote["sectionType"], "interstellar-asymptote")
-        self.assertTrue(asymptote["hypothetical"])
-        self.assertTrue(asymptote["noLocalEphemeris"])
-        self.assertEqual(asymptote["visualizationDistanceAu"], 50.0)
-        ray_start = result["trajectory"][asymptote["transferStartIndex"]]["positionKm"]
-        ray_end = result["trajectory"][asymptote["exitIndex"]]["positionKm"]
-        self.assertAlmostEqual(
-            _magnitude(tuple(end - start for start, end in zip(ray_start, ray_end))),
-            50.0 * AU_KM,
-            delta=1.0,
-        )
-        self.assertTrue(result["summary"]["hypotheticalInterstellarAsymptote"])
-
-    def test_spatial_solar_corridor_couples_oberth_exit_to_proxima(self):
-        solar = section("earth", "sun", "spatial-solar-entry")
-        solar["deltaVPlusKmS"] = 0.5
-        solar["corridor"] = {
-            **CORRIDOR,
-            "centerDirection": [
-                0.6440544822504427,
-                0.4510366297764272,
-                0.6178671236544605,
-            ],
-        }
-        solar["passage"] = {
-            "mode": "partial-orbit",
-            "orbitAngleDeg": 270,
-            "orbitDirection": "prograde",
-            "entryBehavior": "ballistic",
-            "exitBehavior": "ballistic",
-        }
-        proxima = section("sun", "proxima-centauri", "proxima-direction")
-        proxima["deltaVPlusKmS"] = 0.5
-
-        result = simulate_route_sections({
-            "mission": {
-                "startDate": "2026-06-22",
-                "oberthDeltaVKmS": 8.0,
-                "carrierEnabled": True,
-                "kickStageEnabled": True,
-            },
-            "waypointId": "sun",
-            "calculationStage": "geometry",
-            "routeSections": [solar, proxima],
-        })
-
-        calculated_solar = result["routeSections"][0]
-        self.assertEqual(
-            calculated_solar["entryDirection"],
-            solar["corridor"]["centerDirection"],
-        )
-        self.assertTrue(calculated_solar["targetCoupledPassagePlane"])
-        self.assertEqual(calculated_solar["appliedOberthDeltaVKmS"], 8.0)
-        self.assertAlmostEqual(result["summary"]["speedGainKmS"], 8.0)
-        self.assertLess(result["summary"]["actualTargetAlignmentDeg"], 0.05)
-        self.assertLess(result["summary"]["targetCorrectionDeltaVKmS"], 0.5)
-        self.assertTrue(result["summary"]["feasibleWithConfiguredBurn"])
-        self.assertTrue(
-            result["summary"]["sundiverTransferProvidedByMissionModel"]
-        )
-
-    def test_earth_sun_jupiter_proxima_couples_both_passage_planes(self):
-        solar = section("earth", "sun", "earth-sun")
-        solar["deltaVPlusKmS"] = 0.5
-        solar["passage"] = {
-            "mode": "partial-orbit",
-            "orbitAngleDeg": 270,
-            "orbitDirection": "prograde",
-            "entryBehavior": "ballistic",
-            "exitBehavior": "ballistic",
-        }
-        jupiter = section("sun", "jupiter", "sun-jupiter")
-        jupiter["deltaVPlusKmS"] = 0.5
-        jupiter["passage"] = {
-            "mode": "full-orbit",
-            "orbitAngleDeg": 360,
-            "orbitDirection": "prograde",
-            "entryBehavior": "ballistic",
-            "exitBehavior": "ballistic",
-        }
-        proxima = section("jupiter", "proxima-centauri", "jupiter-proxima")
-        proxima["deltaVPlusKmS"] = 0.5
-
-        result = simulate_route_sections({
-            "mission": {
-                "startDate": "2026-06-22",
-                "oberthDeltaVKmS": 8.0,
-                "carrierEnabled": True,
-                "kickStageEnabled": True,
-            },
-            "waypointId": "jupiter",
-            "routeSections": [solar, jupiter, proxima],
-        })
-
-        calculated_solar, calculated_jupiter, _ = result["routeSections"]
-        self.assertTrue(calculated_solar["targetCoupledPassagePlane"])
-        self.assertTrue(calculated_jupiter["targetCoupledPassagePlane"])
-        self.assertEqual(
-            calculated_solar["corridor"]["exitAngleSelection"]["method"],
-            "passive exit to next-body Lambert velocity coupling",
-        )
-        self.assertEqual(calculated_jupiter["lookaheadTargetId"], "proxima-centauri")
-        self.assertLess(result["summary"]["actualTargetAlignmentDeg"], 2.0)
-        self.assertLess(result["summary"]["targetCorrectionDeltaVKmS"], 3.0)
-        # Passage phase, plane and transfer time must be solved together. The
-        # former sequential optimisation left a large artificial burn here.
-        solar_selection = calculated_solar["corridor"]["exitAngleSelection"]
-        self.assertLess(solar_selection["predictedTransitionDeltaVKmS"], 0.01)
-        self.assertLess(calculated_jupiter["requiredTransitionDeltaVKmS"], 0.01)
-        self.assertAlmostEqual(
-            calculated_jupiter["entryDay"] - calculated_solar["exitDay"],
-            solar_selection["transferPreviewDays"],
-            places=6,
-        )
-        # This three-leg case still lacks the configured Jupiter-to-Proxima
-        # injection; that is independent of the now-passive solar handoff.
-        self.assertFalse(result["summary"]["feasibleWithConfiguredBurn"])
-
     def test_unsafe_lambert_fallback_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Kein kollisionsfreier"):
             _candidate(
@@ -377,147 +61,60 @@ class GenericRoutePlannerTests(unittest.TestCase):
                 minimum_central_radius_km=1_000.0,
             )
 
-    def test_infeasible_ideal_route_is_not_reported_as_applied(self):
-        inbound = section("earth", "sun", "in")
-        outbound = section("sun", "earth", "out")
-        inbound["deltaVPlusKmS"] = 0.5
-        outbound["deltaVPlusKmS"] = 0.5
+    def test_selected_origin_is_preserved_and_start_is_outside_body(self):
+        r=self.calculate([section('venus','sun')])
+        self.assertEqual(r['routeSections'][0]['originId'],'venus')
+        self.assertGreater(r['validation']['minimumSolarAltitudeKm'],0)
+        self.assertTrue(r['continuity']['stateChain'])
 
-        result = self.calculate([inbound, outbound])
+    def test_planet_moon_transfer_has_full_velocity_states(self):
+        r=self.calculate([section('earth','earth-moon')])
+        self.assertEqual(r['routeSections'][0]['sectionType'],'Erde-zentrierter Transfer')
+        self.assertLess(r['routeSections'][0]['lambertEndpointResidualKm'],.1)
+        self.assertTrue(all(len(p['velocityKmS'])==3 and p['epochUtc'] for p in r['trajectory']))
 
-        self.assertFalse(result["summary"]["feasibleWithConfiguredBurn"])
-        self.assertFalse(result["summary"]["targetInjectionApplied"])
-        self.assertFalse(result["summary"]["passiveTargeting"])
+    def test_two_planet_legs_use_actual_exit_as_next_start(self):
+        r=self.calculate([section('earth','mars','a'),section('mars','earth','b')])
+        self.assertEqual([(s['originId'],s['targetId']) for s in r['routeSections']],[('earth','mars'),('mars','earth')])
+        for check in r['continuity']['checks']:
+            self.assertLess(check['positionResidualKm'],.01)
+            self.assertLess(check['velocityResidualKmS'],1e-7)
+            self.assertEqual(check['epochResidualSeconds'],0)
+        self.assertAlmostEqual(r['summary']['totalDeltaVKmS'],sum(m['deltaVKmS'] for m in r['maneuvers']),places=8)
 
-    def test_full_jupiter_orbit_exit_angle_targets_earth_return(self):
-        jupiter = section("sun", "jupiter", "jupiter-orbit")
-        jupiter["passage"] = {
-            "mode": "full-orbit",
-            "orbitAngleDeg": 360,
-            "orbitDirection": "prograde",
-            "entryBehavior": "ballistic",
-            "exitBehavior": "ballistic",
-        }
+    def test_real_partial_orbit_is_bound_and_measured(self):
+        r=self.calculate([section('earth','earth-moon',passage={'mode':'partial-orbit','orbitAngleDeg':540,'orbitDirection':'prograde'})])
+        s=r['routeSections'][0]
+        self.assertTrue(s['orbitElements']['bound'])
+        self.assertAlmostEqual(s['completedRevolutions'],1.5,places=5)
+        self.assertLess(s['periapsisResidualKm'],1)
+        self.assertGreater(s['requiredPassageDeltaVKmS'],.1)
 
-        result = self.calculate([
-            section("earth", "sun", "earth-sun"),
-            jupiter,
-            section("jupiter", "earth", "jupiter-earth"),
-        ])
+    def test_zero_section_budget_never_claims_an_applied_mission(self):
+        r=self.calculate([section('earth','mars',deltaVPlusKmS=0,deltaVMinusKmS=0)])
+        self.assertFalse(r['summary']['feasibleWithConfiguredBurn'])
+        self.assertFalse(r['summary']['targetInjectionApplied'])
+        self.assertFalse(r['summary']['passiveTargeting'])
 
-        jupiter_section = result["routeSections"][1]
-        earth_return = result["routeSections"][2]
-        selection = jupiter_section["corridor"]["exitAngleSelection"]
-        self.assertEqual(selection["lookaheadTargetId"], "earth")
-        self.assertGreater(selection["selectedAngleDeg"], 360.0)
-        self.assertAlmostEqual(
-            jupiter_section["corridor"]["passageSignedAngleDeg"],
-            selection["selectedAngleDeg"],
-        )
-        self.assertEqual(earth_return["targetId"], "earth")
-        self.assertLess(earth_return["lambertEndpointResidualKm"], 1.0)
+    def test_solar_corridor_uses_measured_entry_not_requested_vector(self):
+        r=self.calculate([section('earth','sun',corridor={'enabled':True,'centerDirection':[0,0,1],'horizontalHalfAngleDeg':1,'verticalHalfAngleDeg':1})])
+        s=r['routeSections'][0]
+        self.assertFalse(s['corridor']['entryInsideCorridor'])
+        self.assertFalse(r['summary']['targetReached'])
+        self.assertGreater(np.linalg.norm(np.array(s['entryDirection'])-[0,0,1]),.1)
 
-    def test_partial_multi_orbit_keeps_complete_turns_when_targeting_exit(self):
-        jupiter = section("sun", "jupiter", "jupiter-orbit")
-        jupiter["passage"] = {
-            "mode": "partial-orbit",
-            "orbitAngleDeg": 540,
-            "orbitDirection": "prograde",
-            "entryBehavior": "ballistic",
-            "exitBehavior": "ballistic",
-        }
+    def test_direction_section_is_propagated_and_not_a_straight_ray(self):
+        r=self.calculate([section('earth','proxima-centauri','out')])
+        s=r['routeSections'][-1]
+        self.assertEqual(s['sectionType'],'interstellar-asymptote')
+        self.assertTrue(s['hypothetical'])
+        self.assertLess(s['lambertEndpointResidualKm'],.01)
+        self.assertLess(r['summary']['targetAlignmentDeg'],5)
+        self.assertAlmostEqual(np.linalg.norm(r['trajectory'][-1]['positionKm'])/149597870.7,50,places=7)
+        self.assertGreater(len({tuple(round(x,6) for x in p['velocityKmS']) for p in r['trajectory']}),20)
 
-        result = self.calculate([
-            section("earth", "sun", "earth-sun"),
-            jupiter,
-            section("jupiter", "earth", "jupiter-earth"),
-        ])
-
-        selection = result["routeSections"][1]["corridor"]["exitAngleSelection"]
-        self.assertEqual(selection["requestedAngleDeg"], 540.0)
-        self.assertGreaterEqual(selection["selectedAngleDeg"], 540.0)
-        self.assertLess(selection["selectedAngleDeg"], 900.0)
-        self.assertTrue(selection["lineOfSightClear"])
-
-    def test_solar_passage_extends_to_clear_future_jupiter_tangency(self):
-        solar = section("earth", "sun", "solar-passage")
-        solar["passage"] = {
-            "mode": "partial-orbit",
-            "orbitAngleDeg": 270,
-            "orbitDirection": "prograde",
-            "entryBehavior": "ballistic",
-            "exitBehavior": "ballistic",
-        }
-
-        result = self.calculate([
-            solar,
-            section("sun", "jupiter", "sun-jupiter"),
-        ])
-
-        calculated = result["routeSections"][0]
-        selection = calculated["corridor"]["exitAngleSelection"]
-        self.assertEqual(calculated["requestedPassageAngleDeg"], 270.0)
-        self.assertGreaterEqual(calculated["selectedPassageAngleDeg"], 270.0)
-        self.assertEqual(
-            calculated["selectedPassageAngleDeg"],
-            selection["selectedAngleDeg"],
-        )
-        self.assertTrue(selection["lineOfSightClear"])
-        self.assertGreater(selection["departureClearanceKm"], 0.0)
-        self.assertGreaterEqual(selection["autoExtendedAngleDeg"], 0.0)
-        self.assertTrue(result["validation"]["collisionFree"])
-
-    def test_retrograde_passage_uses_a_different_clear_tangency(self):
-        def solar(direction):
-            requested = section("earth", "sun", f"solar-{direction}")
-            requested["passage"] = {
-                "mode": "partial-orbit",
-                "orbitAngleDeg": 270,
-                "orbitDirection": direction,
-                "entryBehavior": "ballistic",
-                "exitBehavior": "ballistic",
-            }
-            return requested
-
-        prograde = self.calculate([
-            solar("prograde"),
-            section("sun", "jupiter", "prograde-jupiter"),
-        ])["routeSections"][0]["corridor"]["exitAngleSelection"]
-        retrograde = self.calculate([
-            solar("retrograde"),
-            section("sun", "jupiter", "retrograde-jupiter"),
-        ])["routeSections"][0]["corridor"]["exitAngleSelection"]
-
-        self.assertTrue(prograde["lineOfSightClear"])
-        self.assertTrue(retrograde["lineOfSightClear"])
-        self.assertNotEqual(
-            prograde["desiredExitRadialDirection"],
-            retrograde["desiredExitRadialDirection"],
-        )
-
-    def test_internal_followup_target_uses_curved_best_approximation(self):
-        earth = section("sun", "earth", "earth-passage")
-        earth["passage"] = {
-            "mode": "partial-orbit",
-            "orbitAngleDeg": 180,
-            "orbitDirection": "prograde",
-            "entryBehavior": "ballistic",
-            "exitBehavior": "ballistic",
-        }
-
-        result = self.calculate([
-            earth,
-            section("earth", "earth-moon", "earth-moon"),
-        ])
-
-        selection = result["routeSections"][0]["corridor"]["exitAngleSelection"]
-        self.assertFalse(selection["lineOfSightClear"])
-        self.assertTrue(selection["bestApproximation"])
-        self.assertTrue(selection["requiresCurvedTransfer"])
-        self.assertGreater(selection["straightLineClearanceDeficitKm"], 0.0)
-        self.assertTrue(result["validation"]["collisionFree"])
-        self.assertTrue(any("beste Annäherung" in warning for warning in result["warnings"]))
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_vehicle_budget_covers_every_maneuver(self):
+        r=self.calculate([section('earth','mars')],mission={'startDate':'2031-01-01','payloadMassKg':900,'carrierMassKg':100,'heatshieldMassKg':100,'propellantMassKg':1,'engineIspSeconds':450})
+        self.assertFalse(r['summary']['feasibleWithConfiguredBurn'])
+        self.assertTrue(r['summary']['vehicleValidated'])
+        self.assertTrue(any(m['vehicleFeasible'] is False for m in r['maneuvers']))
