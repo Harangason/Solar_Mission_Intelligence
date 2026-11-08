@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.log
+.env
+.env.*
+web/node_modules
+web/dist
+data/*.db
+data/*.db-*
+logs/
+startup.*.log

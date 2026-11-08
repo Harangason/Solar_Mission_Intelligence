@@ -218,10 +218,10 @@ export interface SolarSystemData {
   scaleNotice: string
 }
 
-export type TrajectoryStartType = 'body' | 'orbit' | 'state_vector'
+export type TrajectoryStartType = 'body' | 'orbit' | 'state_vector' | 'launch_site'
 export type TrajectoryTargetType = 'body' | 'body_orbit' | 'flyby' | 'zone' | 'boundary' | 'direction' | 'state_vector'
 export type TrajectoryOptimizationMode = 'minimum_energy' | 'minimum_time' | 'minimum_arrival_speed' | 'maximum_exit_speed' | 'minimum_delta_v' | 'balanced' | 'custom'
-export type TrajectoryWaypointType = 'body_flyby' | 'solar_oberth' | 'deep_space_maneuver' | 'zone_crossing' | 'manual_point'
+export type TrajectoryWaypointType = 'body_flyby' | 'body_orbit' | 'solar_oberth' | 'deep_space_maneuver' | 'zone_crossing' | 'manual_point'
 
 export interface GenericTrajectoryCandidate {
   id: string
@@ -243,6 +243,12 @@ export interface GenericTrajectoryCandidate {
 }
 
 export interface GenericTrajectoryPlannerResult {
+  schemaVersion?: string
+  validation?: { collisionFree: boolean; stateContinuous: boolean; ephemeridesValidated: boolean; vehicleValidated: boolean; vehicleFeasible: boolean }
+  maneuvers?: Array<{ type: string; deltaVKmS: number; propellantUsedKg?: number | null }>
+  routeSections?: import('./components/PlannedWaypointRoute').WaypointRouteResult['routeSections']
+  stateChain?: import('./components/PlannedWaypointRoute').WaypointRouteResult['stateChain']
+  bodyEphemerides?: BodyEphemerides
   mode: string
   input: Record<string, unknown>
   start: {
@@ -292,6 +298,9 @@ export interface GenericTrajectoryPlannerResult {
     targetAlignmentDeg?: number
     feasible: boolean
     model: string
+    status?: string
+    vehicleValidated?: boolean
+    vehicleFeasible?: boolean | null
   }
   warnings: string[]
   audit?: { runId: string; createdAtUtc?: string; logFile?: string; documentation?: string }
@@ -300,4 +309,11 @@ export interface GenericTrajectoryPlannerResult {
   zoneExitDate?: string | null
   zoneEntryDistanceAU?: number | null
   zoneExitDistanceAU?: number | null
+}
+
+export interface BodyEphemerides {
+  epochUtc: string
+  frame: 'ECLIPJ2000'
+  centerBodyId: 'sun'
+  tracks: Record<string, Array<{ elapsedDays: number; positionKm: [number, number, number]; velocityKmS: [number, number, number] }>>
 }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import json
 from pathlib import Path
 import sys
 from urllib.request import urlopen
@@ -12,7 +13,10 @@ from urllib.request import urlopen
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_KERNEL_DIR = PROJECT_ROOT / "kernels"
+SATELLITE_KERNELS = ("mar099s.bsp", "jup365.bsp", "sat441.bsp", "ura184_part-3.bsp", "nep097.bsp")
 KERNELS = (
+    ("gm_de440.tpc", "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/gm_de440.tpc", None),
+    ("pck00011.tpc", "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc", None),
     (
         "naif0012.tls",
         "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls",
@@ -56,6 +60,10 @@ def _write_meta_kernel(kernel_dir: Path) -> Path:
         "KERNELS_TO_LOAD = (\n"
         "    '$KERNELS/naif0012.tls'\n"
         "    '$KERNELS/de440s.bsp'\n"
+        "    '$KERNELS/gm_de440.tpc'\n"
+        "    '$KERNELS/pck00011.tpc'\n"
+        + "".join(f"    '$KERNELS/{name}'\n" for name in SATELLITE_KERNELS if (kernel_dir/name).is_file())
+        +
         ")\n\n"
         "\\begintext\n\n"
         "Generic kernels for the Solar-System simulator.\n",
@@ -79,6 +87,7 @@ def main() -> int:
         action="store_true",
         help="Vorhandene Kernel erneut herunterladen.",
     )
+    parser.add_argument("--satellites", action="store_true", help="Genaue Planetenmittelpunkte und große natürliche Monde ergänzen.")
     arguments = parser.parse_args()
     kernel_dir = arguments.kernel_dir.resolve()
     kernel_dir.mkdir(parents=True, exist_ok=True)
@@ -103,7 +112,26 @@ def main() -> int:
             return 1
         print(f"Gespeichert: {destination}")
 
+    if arguments.satellites:
+        base="https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/satellites/"
+        with urlopen(base+"aa_checksums.txt",timeout=60) as response:
+            checksums={line.split()[-1].lstrip('*'):line.split()[0] for line in response.read().decode().splitlines() if len(line.split())==2}
+        for name in SATELLITE_KERNELS:
+            destination=kernel_dir/name
+            if not destination.exists():
+                print(f"Lade offiziellen Satelliten-Kernel {name}", flush=True)
+                _download(base+name,destination)
+            if name not in checksums or _md5(destination)!=checksums[name]:
+                raise RuntimeError(f"Offizielle Prüfsumme für {name} fehlt oder stimmt nicht.")
     meta_kernel = _write_meta_kernel(kernel_dir)
+    manifest=[]
+    for path in kernel_dir.iterdir():
+        if path.suffix not in {'.bsp','.tpc','.tls'}:continue
+        digest=hashlib.sha256()
+        with path.open('rb') as source:
+            for block in iter(lambda:source.read(1024*1024),b''):digest.update(block)
+        manifest.append({'filename':path.name,'sizeBytes':path.stat().st_size,'sha256':digest.hexdigest(),'source':'https://naif.jpl.nasa.gov/pub/naif/generic_kernels/'})
+    (kernel_dir/'manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
     print(f"Meta-Kernel geschrieben: {meta_kernel}")
     print("SPICE wird beim nächsten Start des Python-Servers automatisch aktiviert.")
     return 0

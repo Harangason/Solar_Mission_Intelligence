@@ -678,7 +678,7 @@ def classify_route_sections(raw_sections: object) -> dict:
     return {"solver": "coupled-solar-oberth", "reason": "supported-solar-planet-chain"}
 
 
-def simulate_route_sections(values: dict | None) -> dict:
+def _legacy_coupled_route_sections(values: dict | None) -> dict:
     """Propagate the complete ordered 2D route-section list in one state chain."""
     values = values or {}
     raw_sections = values.get("routeSections")
@@ -1241,3 +1241,8 @@ def simulate_route_sections(values: dict | None) -> dict:
             "totalTransitionDeltaVKmS": total_transition_delta_v,
         },
     }
+
+
+def simulate_route_sections(values: dict | None) -> dict:
+    from planner.trajectory_planner import calculate_section_route
+    return calculate_section_route(values or {})

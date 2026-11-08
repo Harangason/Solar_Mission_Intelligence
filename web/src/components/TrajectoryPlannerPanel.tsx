@@ -59,9 +59,9 @@ const TARGET_LABELS: Record<TrajectoryTargetType, string> = {
 }
 
 function addYears(date: string, years: number) {
-  const value = new Date(`${date}T00:00:00Z`)
+  const value = new Date(date.includes('T') ? `${date.replace(/Z$/, '')}Z` : `${date}T00:00:00Z`)
   value.setUTCFullYear(value.getUTCFullYear() + years)
-  return value.toISOString().slice(0, 10)
+  return value.toISOString().slice(0, 16)
 }
 
 export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApply }: TrajectoryPlannerPanelProps) {
@@ -70,7 +70,7 @@ export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApp
   const [startOrbitAltitudeKm, setStartOrbitAltitudeKm] = useState(400)
   const [startPositionText, setStartPositionText] = useState('149597870.7, 0, 0')
   const [startVelocityText, setStartVelocityText] = useState('0, 29.78, 0')
-  const [departureStartDate, setDepartureStartDate] = useState(defaultStartDate)
+  const [departureStartDate, setDepartureStartDate] = useState(defaultStartDate.includes('T') ? new Date(defaultStartDate).toISOString().slice(0,16) : `${defaultStartDate}T00:00`)
   const [departureEndDate, setDepartureEndDate] = useState(addYears(defaultStartDate, 1))
   const [departureStepDays, setDepartureStepDays] = useState(60)
   const [targetType, setTargetType] = useState<TrajectoryTargetType>('body')
@@ -99,6 +99,26 @@ export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApp
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showCandidates, setShowCandidates] = useState(false)
+  const [missionTemplate, setMissionTemplate] = useState('generic')
+  const [targetOrbitAltitudeKm, setTargetOrbitAltitudeKm] = useState(100)
+  const [requiredRevolutions, setRequiredRevolutions] = useState(1)
+  const [returnMode, setReturnMode] = useState('earth_reentry')
+  const [referenceFrame, setReferenceFrame] = useState('ECLIPJ2000')
+  const [centerBodyId, setCenterBodyId] = useState('sun')
+  const [vehicleEnabled, setVehicleEnabled] = useState(false)
+  const [highFidelityNBody, setHighFidelityNBody] = useState(false)
+  const [wetMassKg, setWetMassKg] = useState(10000)
+  const [propellantMassKg, setPropellantMassKg] = useState(8000)
+  const [engineIspSeconds, setEngineIspSeconds] = useState(450)
+  const [launchAzimuthDeg, setLaunchAzimuthDeg] = useState(90)
+  const [launchLatitudeDeg, setLaunchLatitudeDeg] = useState(28.608422)
+  const [launchLongitudeDeg, setLaunchLongitudeDeg] = useState(-80.604133)
+  const [launchInclinationDeg, setLaunchInclinationDeg] = useState(28.608422)
+  const [launchPayloadMassKg, setLaunchPayloadMassKg] = useState(1000)
+  const [launchVehicleJson, setLaunchVehicleJson] = useState(JSON.stringify({ name: 'Referenzentwurf – kein zertifiziertes Fahrzeug', stages: [
+    { id: 'first', dryMassKg: 25000, propellantMassKg: 400000, thrustSeaLevelN: 7600000, thrustVacuumN: 8200000, specificImpulseSeaLevelS: 285, specificImpulseVacuumS: 310, referenceAreaM2: 12 },
+    { id: 'upper', dryMassKg: 5000, propellantMassKg: 100000, thrustVacuumN: 1100000, specificImpulseVacuumS: 350, referenceAreaM2: 12 },
+  ] }, null, 2))
   const bodyOptions = useMemo(() => [
     { id: 'sun', name: 'Sonne' },
     ...planets.map(({ id, name }) => ({ id, name })),
@@ -117,7 +137,7 @@ export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApp
   }
   const reset = () => {
     setStartType('body'); setStartBodyId('earth'); setTargetType('body'); setTargetBodyId(planets.find((planet) => planet.id !== 'earth')?.id ?? planets[0]?.id ?? 'sun')
-    setWaypoints([]); setResult(null); setError(null); setShowCandidates(false)
+    setMissionTemplate('generic'); setVehicleEnabled(false); setHighFidelityNBody(false); setWaypoints([]); setResult(null); setError(null); setShowCandidates(false)
   }
   const calculate = async () => {
     setLoading(true)
@@ -126,7 +146,10 @@ export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApp
       const target: Record<string, unknown> = { type: targetType }
       if (['body', 'body_orbit', 'flyby'].includes(targetType)) {
         target.bodyId = targetBodyId
-        target.arrivalMode = targetType === 'flyby' ? 'flyby' : 'rendezvous'
+        target.arrivalMode = targetType === 'flyby' ? 'flyby' : targetType === 'body_orbit' ? 'orbit' : 'soi_entry'
+        target.orbitAltitudeKm = targetOrbitAltitudeKm
+        target.flybyAltitudeKm = targetOrbitAltitudeKm
+        target.requiredRevolutions = requiredRevolutions
       } else if (targetType === 'zone') {
         target.zoneId = zoneId
         target.arrivalMode = 'crossing'
@@ -144,30 +167,38 @@ export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApp
         target.distanceAU = directionDistanceAU
         target.arrivalMode = 'asymptote'
       } else {
+        target.frame = referenceFrame
+        target.centerBodyId = centerBodyId
         target.targetDate = arrivalStartDate
         target.positionKm = targetPositionText.split(',').map((value) => Number(value.trim()))
         target.velocityKmS = targetVelocityText.split(',').map((value) => Number(value.trim()))
       }
       const payload = {
+        ...(missionTemplate === 'earth_moon_orbit_return' ? { missionTemplate, lunarReturn: { returnMode, lunarOrbitPeriluneKm: targetOrbitAltitudeKm, lunarOrbitApoluneKm: targetOrbitAltitudeKm, requiredLunarRevolutions: requiredRevolutions, earthParkingOrbitAltitudeKm: startOrbitAltitudeKm } } : {}),
+        ...(vehicleEnabled && startType !== 'launch_site' ? { vehicle: { wetMassKg, propellantMassKg, engineIspSeconds } } : {}),
+        ...(startType === 'launch_site' ? { launch: { launchSite: { id: 'user-pad', name: 'Konfigurierter Startplatz', latitudeDeg: launchLatitudeDeg, longitudeDeg: launchLongitudeDeg, altitudeM: 0 }, launchAzimuthDeg, targetOrbitAltitudeKm: startOrbitAltitudeKm, targetOrbitInclinationDeg: launchInclinationDeg, payloadMassKg: launchPayloadMassKg, launchVehicle: JSON.parse(launchVehicleJson) } } : {}),
         start: {
           type: startType,
           bodyId: startType === 'state_vector' ? undefined : startBodyId,
           orbitAltitudeKm: startOrbitAltitudeKm,
           startDate: departureStartDate,
           ...(startType === 'state_vector' ? {
+            frame: referenceFrame, centerBodyId,
             positionKm: startPositionText.split(',').map((value) => Number(value.trim())),
             velocityKmS: startVelocityText.split(',').map((value) => Number(value.trim())),
           } : {}),
         },
         target,
-        waypoints: waypoints.map((waypoint) => ({
+        waypoints: (missionTemplate === 'generic' ? waypoints : []).map((waypoint) => ({
           ...waypoint,
-          bodyId: ['body_flyby'].includes(waypoint.type) ? waypoint.bodyId : undefined,
+          bodyId: ['body_flyby', 'body_orbit'].includes(waypoint.type) ? waypoint.bodyId : undefined,
+          orbitAltitudeKm: waypoint.flybyAltitudeKm,
+          requiredRevolutions,
+          ...(waypoint.type === 'deep_space_maneuver' ? { elapsedDays: waypoint.encounterDay } : {}),
           zoneId: waypoint.type === 'zone_crossing' ? waypoint.zoneId : undefined,
           aimpoint: waypoint.type === 'body_flyby' ? {
             enabled: waypoint.aimpointEnabled,
             clockAngleDeg: waypoint.aimpointClockAngleDeg,
-            screenRadiusNorm: waypoint.aimpointScreenRadiusNorm,
             role: waypoint.aimpointRole,
             altitudeKm: waypoint.flybyAltitudeKm,
           } : undefined,
@@ -178,11 +209,12 @@ export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApp
         },
         constraints: {
           maxC3Km2S2, maxTotalDeltaVKmS, maxArrivalVInfinityKmS,
-          desiredSolarExitSpeedKmS: 25, targetToleranceDeg: 5,
+          targetToleranceDeg: 5,
         },
         optimizationMode,
         simulation: {
-          sampleTrajectoryPoints: 360, includeUncertainty: true,
+          highFidelityNBody,
+          sampleTrajectoryPoints: 360, includeUncertainty: false,
           includeAudit: true, propagationYears,
         },
       }
@@ -205,62 +237,73 @@ export function TrajectoryPlannerPanel({ planets, moons, defaultStartDate, onApp
     <details className="trajectory-planner-panel">
       <summary>Trajectory Planner</summary>
       <div className="trajectory-planner-grid">
-        <label><span>Starttyp</span><select value={startType} onChange={(event) => setStartType(event.target.value as TrajectoryStartType)}><option value="body">Körper</option><option value="orbit">Orbit</option><option value="state_vector">State Vector</option></select></label>
-        {startType !== 'state_vector' && <label><span>Startkörper</span><select value={startBodyId} onChange={(event) => setStartBodyId(event.target.value)}>{bodyOptions.map((body) => <option key={body.id} value={body.id}>{body.name}</option>)}</select></label>}
-        {startType === 'orbit' && <label><span>Startorbit-Höhe</span><input type="number" min="0" value={startOrbitAltitudeKm} onChange={(event) => setStartOrbitAltitudeKm(event.target.valueAsNumber)} /><small>km</small></label>}
+        <label><span>Mission</span><select value={missionTemplate} onChange={(event) => { setMissionTemplate(event.target.value); setResult(null); if (event.target.value !== 'generic') { setStartBodyId('earth'); setStartType('orbit') } }}><option value="generic">Generische Route</option><option value="earth_moon_orbit_return">Erde → Mondorbit → Erde</option></select></label>
+        <label><span>Starttyp</span><select value={startType} onChange={(event) => setStartType(event.target.value as TrajectoryStartType)}><option value="body">Körper mit freier Parkbahn</option><option value="orbit">Parkorbit</option>{missionTemplate === 'generic' && <option value="state_vector">State Vector</option>}<option value="launch_site">Startplatz mit Aufstieg</option></select></label>
+        {startType !== 'state_vector' && missionTemplate === 'generic' && startType !== 'launch_site' && <label><span>Startkörper</span><select value={startBodyId} onChange={(event) => setStartBodyId(event.target.value)}>{bodyOptions.map((body) => <option key={body.id} value={body.id}>{body.name}</option>)}</select></label>}
+        {startType !== 'state_vector' && <label><span>Startorbit-Höhe</span><input type="number" min="0" value={startOrbitAltitudeKm} onChange={(event) => setStartOrbitAltitudeKm(event.target.valueAsNumber)} /><small>km</small></label>}
+        {startType === 'launch_site' && <><label><span>Breite Startplatz</span><input type="number" min="-90" max="90" value={launchLatitudeDeg} onChange={(e) => setLaunchLatitudeDeg(e.target.valueAsNumber)} /></label><label><span>Länge Startplatz</span><input type="number" min="-180" max="180" value={launchLongitudeDeg} onChange={(e) => setLaunchLongitudeDeg(e.target.valueAsNumber)} /></label><label><span>Startazimut</span><input type="number" value={launchAzimuthDeg} onChange={(e) => setLaunchAzimuthDeg(e.target.valueAsNumber)} /><small>0° Nord · 90° Ost</small></label><label><span>Zielneigung</span><input type="number" value={launchInclinationDeg} onChange={(e) => setLaunchInclinationDeg(e.target.valueAsNumber)} /></label><label><span>Nutzlast kg</span><input type="number" min="1" value={launchPayloadMassKg} onChange={(e) => setLaunchPayloadMassKg(e.target.valueAsNumber)} /></label><label><span>Fahrzeug und Stufen (JSON)</span><textarea rows={8} value={launchVehicleJson} onChange={(e) => setLaunchVehicleJson(e.target.value)} /><small>Referenzentwurf; eigene Massen, Schub und Isp eintragen.</small></label></>}
+        {(startType === 'state_vector' || (missionTemplate === 'generic' && targetType === 'state_vector')) && <><label><span>Inertiales System</span><select value={referenceFrame} onChange={(e) => setReferenceFrame(e.target.value)}><option>ECLIPJ2000</option><option>J2000</option></select></label><label><span>Bezugskörper</span><select value={centerBodyId} onChange={(e) => setCenterBodyId(e.target.value)}>{bodyOptions.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label></>}
+        {['body_orbit', 'flyby'].includes(targetType) || missionTemplate !== 'generic' ? <><label><span>Zielorbit / Flyby-Höhe km</span><input type="number" min="1" value={targetOrbitAltitudeKm} onChange={(e) => setTargetOrbitAltitudeKm(e.target.valueAsNumber)} /></label><label><span>Geforderte Umläufe</span><input type="number" min={missionTemplate === 'generic' ? 0 : 1} value={requiredRevolutions} onChange={(e) => setRequiredRevolutions(e.target.valueAsNumber)} /></label></> : null}
+        {missionTemplate !== 'generic' && <label><span>Erdrückkehr</span><select value={returnMode} onChange={(e) => setReturnMode(e.target.value)}><option value="earth_reentry">Wiedereintritt 120 km / −6,5°</option><option value="earth_orbit_capture">Erdorbit-Aufnahme</option><option value="flyby_return">Erdvorbeiflug</option></select></label>}
         {startType === 'state_vector' && <><label><span>Startposition x,y,z</span><input value={startPositionText} onChange={(event) => setStartPositionText(event.target.value)} /><small>km</small></label><label><span>Startgeschwindigkeit x,y,z</span><input value={startVelocityText} onChange={(event) => setStartVelocityText(event.target.value)} /><small>km/s</small></label></>}
-        <label><span>Startdatum von</span><input type="date" value={departureStartDate} onChange={(event) => setDepartureStartDate(event.target.value)} /></label>
-        <label><span>Startdatum bis</span><input type="date" value={departureEndDate} onChange={(event) => setDepartureEndDate(event.target.value)} /></label>
+        <label><span>Startzeit UTC von</span><input type="datetime-local" value={departureStartDate} onChange={(event) => setDepartureStartDate(event.target.value)} onBlur={(event) => setDepartureStartDate(event.currentTarget.value)} /></label>
+        <label><span>Startzeit UTC bis</span><input type="datetime-local" value={departureEndDate} onChange={(event) => setDepartureEndDate(event.target.value)} onBlur={(event) => setDepartureEndDate(event.currentTarget.value)} /></label>
         <label><span>Startraster</span><input type="number" min="1" value={departureStepDays} onChange={(event) => setDepartureStepDays(event.target.valueAsNumber)} /><small>Tage</small></label>
+        {missionTemplate === 'generic' && <>
         <label><span>Zieltyp</span><select value={targetType} onChange={(event) => setTargetType(event.target.value as TrajectoryTargetType)}>{Object.entries(TARGET_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         {['body', 'body_orbit', 'flyby'].includes(targetType) && <label><span>Zielkörper</span><select value={targetBodyId} onChange={(event) => setTargetBodyId(event.target.value)}>{bodyOptions.map((body) => <option key={body.id} value={body.id}>{body.name}</option>)}</select></label>}
         {targetType === 'zone' && <label><span>Zielzone</span><select value={zoneId} onChange={(event) => setZoneId(event.target.value)}>{ZONES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>}
         {targetType === 'boundary' && <><label><span>Boundary</span><select value={boundaryId} onChange={(event) => setBoundaryId(event.target.value)}>{BOUNDARIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>{boundaryId === 'custom' && <label><span>Eigene Distanz</span><input type="number" min="0.1" value={customBoundaryAU} onChange={(event) => setCustomBoundaryAU(event.target.valueAsNumber)} /><small>AE</small></label>}</>}
         {targetType === 'direction' && <><label><span>Koordinaten</span><select value={directionCoordinates} onChange={(event) => setDirectionCoordinates(event.target.value as typeof directionCoordinates)}><option value="equatorial">RA / Dec</option><option value="ecliptic">Ekliptikale Länge / Breite</option></select></label>{directionCoordinates === 'equatorial' ? <><label><span>Rektaszension</span><input type="number" value={rightAscensionDeg} onChange={(event) => setRightAscensionDeg(event.target.valueAsNumber)} /><small>°</small></label><label><span>Deklination</span><input type="number" min="-90" max="90" value={declinationDeg} onChange={(event) => setDeclinationDeg(event.target.valueAsNumber)} /><small>°</small></label></> : <><label><span>Ekliptikale Länge</span><input type="number" value={eclipticLongitudeDeg} onChange={(event) => setEclipticLongitudeDeg(event.target.valueAsNumber)} /><small>°</small></label><label><span>Ekliptikale Breite</span><input type="number" min="-90" max="90" value={eclipticLatitudeDeg} onChange={(event) => setEclipticLatitudeDeg(event.target.valueAsNumber)} /><small>°</small></label></>}<label><span>Darstellungsdistanz</span><input type="number" min="1" value={directionDistanceAU} onChange={(event) => setDirectionDistanceAU(event.target.valueAsNumber)} /><small>AE</small></label></>}
         {targetType === 'state_vector' && <><label><span>Zielposition x,y,z</span><input value={targetPositionText} onChange={(event) => setTargetPositionText(event.target.value)} /><small>km</small></label><label><span>Zielgeschwindigkeit x,y,z</span><input value={targetVelocityText} onChange={(event) => setTargetVelocityText(event.target.value)} /><small>km/s</small></label></>}
-        {['body', 'body_orbit', 'flyby', 'state_vector'].includes(targetType) && <><label><span>Ankunft von</span><input type="date" value={arrivalStartDate} onChange={(event) => setArrivalStartDate(event.target.value)} /></label><label><span>Ankunft bis</span><input type="date" value={arrivalEndDate} onChange={(event) => setArrivalEndDate(event.target.value)} /></label><label><span>Ankunftsraster</span><input type="number" min="1" value={arrivalStepDays} onChange={(event) => setArrivalStepDays(event.target.valueAsNumber)} /><small>Tage</small></label></>}
+        {['body', 'body_orbit', 'flyby', 'state_vector'].includes(targetType) && <><label><span>Ankunft UTC von</span><input type="datetime-local" value={arrivalStartDate} onChange={(event) => setArrivalStartDate(event.target.value)} onBlur={(event) => setArrivalStartDate(event.currentTarget.value)} /></label><label><span>Ankunft UTC bis</span><input type="datetime-local" value={arrivalEndDate} onChange={(event) => setArrivalEndDate(event.target.value)} onBlur={(event) => setArrivalEndDate(event.currentTarget.value)} /></label><label><span>Ankunftsraster</span><input type="number" min="1" value={arrivalStepDays} onChange={(event) => setArrivalStepDays(event.target.valueAsNumber)} /><small>Tage</small></label></>}
+        </>}
         <label><span>Optimierung</span><select value={optimizationMode} onChange={(event) => setOptimizationMode(event.target.value as TrajectoryOptimizationMode)}><option value="balanced">Ausgewogen</option><option value="minimum_energy">Minimale Energie</option><option value="minimum_time">Minimale Zeit</option><option value="minimum_arrival_speed">Minimales Ankunfts-v∞</option><option value="maximum_exit_speed">Maximale Endgeschwindigkeit</option><option value="minimum_delta_v">Minimales Δv</option></select></label>
         <label><span>Max C3</span><input type="number" min="0" value={maxC3Km2S2} onChange={(event) => setMaxC3Km2S2(event.target.valueAsNumber)} /><small>km²/s²</small></label>
         <label><span>Max Gesamt-Δv</span><input type="number" min="0" value={maxTotalDeltaVKmS} onChange={(event) => setMaxTotalDeltaVKmS(event.target.valueAsNumber)} /><small>km/s</small></label>
+        <label><span>Fahrzeugbudget nachweisen</span><input type="checkbox" checked={vehicleEnabled} onChange={(e) => setVehicleEnabled(e.target.checked)} /></label>
+        <label><span>N-Körper-Korrektur</span><input type="checkbox" checked={highFidelityNBody} onChange={(e) => setHighFidelityNBody(e.target.checked)} /><small>Bewegte Planeten und große Monde; deutlich längere Berechnung.</small></label>
+        {vehicleEnabled && <><label><span>Nassmasse kg</span><input type="number" min="1" value={wetMassKg} onChange={(e) => setWetMassKg(e.target.valueAsNumber)} /></label><label><span>Treibstoff kg</span><input type="number" min="0" value={propellantMassKg} onChange={(e) => setPropellantMassKg(e.target.valueAsNumber)} /></label><label><span>Isp Sekunden</span><input type="number" min="1" value={engineIspSeconds} onChange={(e) => setEngineIspSeconds(e.target.valueAsNumber)} /></label></>}
         <label><span>Max Ankunfts-v∞</span><input type="number" min="0" value={maxArrivalVInfinityKmS} onChange={(event) => setMaxArrivalVInfinityKmS(event.target.valueAsNumber)} /><small>km/s</small></label>
         <label><span>Simulation</span><input type="number" min="0.1" max="50000" value={propagationYears} onChange={(event) => setPropagationYears(event.target.valueAsNumber)} /><small>Jahre</small></label>
       </div>
-      <section className="trajectory-waypoints">
+      {missionTemplate === 'generic' && <section className="trajectory-waypoints">
         <header><strong>Wegpunkte</strong><button type="button" onClick={addWaypoint}>+ Wegpunkt hinzufügen</button></header>
         {waypoints.map((waypoint, index) => <article key={waypoint.id}>
           <span>{index + 1}</span>
-          <select value={waypoint.type} onChange={(event) => updateWaypoint(waypoint.id, { type: event.target.value as TrajectoryWaypointType })}><option value="body_flyby">Planet-Flyby</option><option value="solar_oberth">Solar-Oberth</option><option value="deep_space_maneuver">Deep-Space-Manöver</option><option value="zone_crossing">Zone Crossing</option><option value="manual_point">Manual Point</option></select>
-          {waypoint.type === 'body_flyby' && <select value={waypoint.bodyId} onChange={(event) => updateWaypoint(waypoint.id, { bodyId: event.target.value })}>{bodyOptions.filter((body) => body.id !== 'sun').map((body) => <option key={body.id} value={body.id}>{body.name}</option>)}</select>}
+          <select value={waypoint.type} onChange={(event) => updateWaypoint(waypoint.id, { type: event.target.value as TrajectoryWaypointType })}><option value="body_flyby">Körper-Flyby</option><option value="body_orbit">Körperorbit</option><option value="solar_oberth">Solar-Oberth</option><option value="deep_space_maneuver">Deep-Space-Manöver</option><option value="zone_crossing">Zone Crossing</option></select>
+          {['body_flyby', 'body_orbit'].includes(waypoint.type) && <select value={waypoint.bodyId} onChange={(event) => updateWaypoint(waypoint.id, { bodyId: event.target.value })}>{bodyOptions.filter((body) => body.id !== 'sun').map((body) => <option key={body.id} value={body.id}>{body.name}</option>)}</select>}
           {waypoint.type === 'zone_crossing' && <select value={waypoint.zoneId} onChange={(event) => updateWaypoint(waypoint.id, { zoneId: event.target.value })}>{ZONES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>}
-          {waypoint.type === 'body_flyby' && <input aria-label="Flyby-Höhe" type="number" min="0" value={waypoint.flybyAltitudeKm} onChange={(event) => updateWaypoint(waypoint.id, { flybyAltitudeKm: event.target.valueAsNumber })} />}
-          {waypoint.type === 'body_flyby' && <input aria-label="Begegnungstag" type="number" min="1" value={waypoint.encounterDay} onChange={(event) => updateWaypoint(waypoint.id, { encounterDay: event.target.valueAsNumber })} />}
+          {['body_flyby', 'body_orbit'].includes(waypoint.type) && <input aria-label="Orbit- oder Flyby-Höhe" type="number" min="0" value={waypoint.flybyAltitudeKm} onChange={(event) => updateWaypoint(waypoint.id, { flybyAltitudeKm: event.target.valueAsNumber })} />}
+          {['body_flyby', 'body_orbit', 'deep_space_maneuver'].includes(waypoint.type) && <input aria-label="Begegnungstag" type="number" min="1" value={waypoint.encounterDay} onChange={(event) => updateWaypoint(waypoint.id, { encounterDay: event.target.valueAsNumber })} />}
           {waypoint.type === 'body_flyby' && <select aria-label="Flyby-Modus" value={waypoint.flybyMode} onChange={(event) => updateWaypoint(waypoint.id, { flybyMode: event.target.value as WaypointDraft['flybyMode'] })}><option value="acceleration">Beschleunigung</option><option value="observation">Beobachtung</option></select>}
           <input aria-label="Burn Delta-v" type="number" min="0" step="0.1" value={waypoint.burnDeltaVKmS} onChange={(event) => updateWaypoint(waypoint.id, { burnDeltaVKmS: event.target.valueAsNumber })} />
           <button type="button" aria-label={`Wegpunkt ${index + 1} entfernen`} onClick={() => setWaypoints((current) => current.filter((item) => item.id !== waypoint.id))}>×</button>
           {waypoint.type === 'body_flyby' && <div className="trajectory-aimpoint-fields">
-            <label><input type="checkbox" checked={waypoint.aimpointEnabled} onChange={(event) => updateWaypoint(waypoint.id, { aimpointEnabled: event.target.checked })} /> Aimpoint physikalisch verwenden</label>
+            <label><input type="checkbox" checked={waypoint.aimpointEnabled} onChange={(event) => updateWaypoint(waypoint.id, { aimpointEnabled: event.target.checked })} /> Periapsis über B-Plane-Uhrwinkel lösen</label>
             {waypoint.aimpointEnabled && <>
-              <label>Rolle<select value={waypoint.aimpointRole} onChange={(event) => updateWaypoint(waypoint.id, { aimpointRole: event.target.value as WaypointDraft['aimpointRole'] })}><option value="entry">Entry</option><option value="periapsis">Periapsis</option><option value="exit">Exit</option></select></label>
+              <label>Rolle<select value={waypoint.aimpointRole} onChange={(event) => updateWaypoint(waypoint.id, { aimpointRole: event.target.value as WaypointDraft['aimpointRole'] })}><option value="periapsis">Periapsis</option></select></label>
               <label>Uhrwinkel<input type="number" step="1" value={waypoint.aimpointClockAngleDeg} onChange={(event) => updateWaypoint(waypoint.id, { aimpointClockAngleDeg: event.target.valueAsNumber })} /></label>
-              <label>Scheibenradius<input type="number" min="0" max="1" step="0.05" value={waypoint.aimpointScreenRadiusNorm} onChange={(event) => updateWaypoint(waypoint.id, { aimpointScreenRadiusNorm: event.target.valueAsNumber })} /></label>
             </>}
           </div>}
         </article>)}
-      </section>
+      </section>}
       <div className="trajectory-planner-actions">
         <button type="button" disabled={loading} onClick={() => void calculate()}>{loading ? 'Berechnung läuft …' : 'Route berechnen'}</button>
         <button type="button" disabled={!result} onClick={() => result && onApply(result)}>Beste Route anzeigen</button>
         <button type="button" disabled={!result?.candidates?.length} onClick={() => setShowCandidates((current) => !current)}>Kandidaten anzeigen</button>
-        <button type="button" disabled={!result || !result.summary.feasible} onClick={() => result && onApply(result)}>Als Mission übernehmen</button>
+        <button type="button" disabled={!result || !result.summary.feasible || !result.summary.vehicleValidated} onClick={() => result && onApply(result)}>Als Mission übernehmen</button>
         <button type="button" onClick={reset}>Zurücksetzen</button>
       </div>
       {error && <p className="trajectory-planner-error" role="alert">{error}</p>}
       {result && <section className="trajectory-planner-result">
         <strong>{result.start.bodyId ?? result.start.type} → {result.target.bodyId ?? result.target.zoneId ?? result.target.boundaryId ?? result.target.type}</strong>
-        <span>Zieltyp {result.target.type} · Flugzeit {result.summary.totalFlightDays.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Tage</span>
+        <span>Start {result.start.date} · Zieltyp {result.target.type} · Flugzeit {result.summary.totalFlightDays.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Tage</span>
         <span>Gesamt-Δv {(result.summary.totalDeltaVKmS ?? 0).toFixed(2)} km/s · C3 {result.summary.c3Km2S2?.toFixed(2) ?? '–'} · Ankunfts-v∞ {result.summary.arrivalVInfinityKmS?.toFixed(2) ?? '–'} km/s</span>
-        <span>Endgeschwindigkeit {result.summary.finalHeliocentricSpeedKmS?.toFixed(2) ?? '–'} km/s · Ziel {result.summary.targetReached ? 'erreicht' : 'nicht erreicht'} · {result.summary.feasible ? 'machbar' : 'nicht machbar'}</span>
+        <span>Endgeschwindigkeit {result.summary.finalHeliocentricSpeedKmS?.toFixed(2) ?? '–'} km/s · Ziel {result.summary.targetReached ? 'erreicht' : 'nicht erreicht'} · {result.summary.feasible ? (result.summary.vehicleValidated ? 'Fahrzeugbudget erfüllt' : 'modellgültig') : 'nicht machbar'}</span>
         <span>Modell: {result.summary.model}</span>
+        <span>Status: {result.summary.status ?? 'historischer Ergebnisstand'} · Fahrzeugnachweis {result.summary.vehicleValidated ? (result.summary.vehicleFeasible ? 'erfüllt' : 'nicht erfüllt') : 'nicht konfiguriert'}</span>
+        {result.maneuvers?.map((m, i) => <small key={i}>{m.type}: {m.deltaVKmS.toFixed(3)} km/s{m.propellantUsedKg != null ? ` · ${m.propellantUsedKg.toFixed(1)} kg Treibstoff` : ''}</small>)}
         {result.warnings.map((warning) => <small key={warning}>{warning}</small>)}
       </section>}
       {showCandidates && result?.candidates && <ol className="trajectory-candidate-list">{result.candidates.slice(0, 30).map((candidate) => <li key={candidate.id}><span>{candidate.departureDate} → {candidate.arrivalDate}</span><span>{candidate.flightDays.toFixed(0)} d · Δv {(candidate.totalDeltaVKmS ?? 0).toFixed(2)} km/s · Score {candidate.score.toFixed(3)}</span></li>)}</ol>}

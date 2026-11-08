@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from services.project_store import PROJECT_DATABASE
 
 
-CALCULATION_SCHEMA_VERSION = 4
+CALCULATION_SCHEMA_VERSION = 5
 
 
 def _utc_now() -> str:
@@ -81,6 +81,8 @@ def _vector(value: object) -> tuple[float | None, float | None, float | None]:
 def _without_heavy_trajectories(result: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(result)
     metadata.pop("trajectory", None)
+    for key in ('genericTrajectoryPlan','legacyRoute'):
+        if isinstance(metadata.get(key),dict):metadata[key]=_without_heavy_trajectories(metadata[key])
     high_fidelity = metadata.get("highFidelityNBody")
     if isinstance(high_fidelity, dict):
         metadata["highFidelityNBody"] = {
@@ -355,6 +357,9 @@ class CalculationStore:
                     "ALTER TABLE calculation_runs "
                     "ADD COLUMN geometry_snapshot_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            point_columns={r['name'] for r in connection.execute('PRAGMA table_info(calculation_trajectory_points)').fetchall()}
+            if 'state_json' not in point_columns:
+                connection.execute("ALTER TABLE calculation_trajectory_points ADD COLUMN state_json TEXT NOT NULL DEFAULT '{}'")
             connection.execute(
                 """
                 INSERT OR IGNORE INTO calculation_schema_migrations (
@@ -549,6 +554,7 @@ class CalculationStore:
                 route_sections,
                 summary,
                 request_values,
+                result or {},
             )
             self._insert_velocities(
                 connection, variant_id, section_ids, route_sections, summary
@@ -655,7 +661,17 @@ class CalculationStore:
         sections: list[object],
         summary: dict[str, Any],
         request_values: dict[str, Any],
+        result: dict[str, Any],
     ) -> None:
+        if result.get('schemaVersion')=='2.0' and isinstance(result.get('maneuvers'),list):
+            rows=[self._delta_v_row(variant_id,None,burn['type'],burn['deltaVKmS'],None,
+                burn['deltaVKmS'] if burn.get('applied') else 0.,is_applied=burn.get('applied'),details=burn)
+                for burn in result['maneuvers']]
+            if summary.get('ascentDeltaVKmS'):
+                rows.insert(0,self._delta_v_row(variant_id,None,'FINITE_THRUST_ASCENT',summary['ascentDeltaVKmS'],None,
+                    summary['ascentDeltaVKmS'],is_applied=True,details={'includedInTotal':True}))
+            connection.executemany('INSERT INTO calculation_delta_v (id,calculation_variant_id,calculation_route_section_id,delta_v_type,required_delta_v_km_s,available_delta_v_km_s,applied_delta_v_km_s,delta_v_deficit_km_s,is_applied,details_json) VALUES (?,?,?,?,?,?,?,?,?,?)',rows)
+            return
         rows = [
             self._delta_v_row(
                 variant_id,
@@ -829,6 +845,7 @@ class CalculationStore:
                         *position,
                         *velocity,
                         str(point.get("phase") or ""),
+                        _json({k:point[k] for k in ('epochUtc','frame','centerBodyId','massKg','propellantKg') if k in point}),
                     )
                 )
         if rows:
@@ -839,8 +856,8 @@ class CalculationStore:
                     trajectory_kind, point_index, elapsed_days,
                     position_x_km, position_y_km, position_z_km,
                     velocity_x_km_s, velocity_y_km_s, velocity_z_km_s,
-                    phase_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    phase_name, state_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -1105,6 +1122,12 @@ class CalculationStore:
             if row is None:
                 raise LookupError("Berechnungsvariante nicht gefunden.")
             result = self._variant_summary(row)
+            metadata=json.loads(row['result_metadata_json'] or '{}')
+            result['resultMetadata']=metadata
+            result['calculationVersion']=metadata.get('schemaVersion')
+            from services.calculation_version import CALCULATION_BUILD
+            result['needsRecalculation']=metadata.get('schemaVersion')!='2.0' or metadata.get('calculationBuild')!=CALCULATION_BUILD
+            result['currentValidated']=not result['needsRecalculation'] and bool((metadata.get('summary') or {}).get('feasible')) and all((metadata.get('validation') or {}).get(k) is True for k in ('collisionFree','stateContinuous','ephemeridesValidated','targetReached'))
             result["sections"] = [
                 dict(item)
                 for item in connection.execute(
@@ -1153,6 +1176,10 @@ class CalculationStore:
                 result["routePoints"] = self._route_points(
                     connection, variant_id, limit=None
                 )
+                rows=connection.execute("SELECT * FROM calculation_trajectory_points WHERE calculation_variant_id=? AND trajectory_kind='nominal' ORDER BY point_index",(variant_id,)).fetchall()
+                result['trajectory']=[{**json.loads(p['state_json'] or '{}'),'elapsedDays':p['elapsed_days'],
+                    'positionKm':[p['position_x_km'],p['position_y_km'],p['position_z_km']],
+                    'velocityKmS':[p['velocity_x_km_s'],p['velocity_y_km_s'],p['velocity_z_km_s']],'phase':p['phase_name']} for p in rows]
         return result
 
     @staticmethod

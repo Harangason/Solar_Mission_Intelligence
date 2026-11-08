@@ -1,3 +1,4 @@
+import { bodyPositionKmAt } from './bodyEphemerides'
 import * as THREE from 'three'
 
 import type { PlanetData } from './types'
@@ -87,6 +88,8 @@ export function planetPositionAt(
   distanceSceneFactor = DISTANCE_SCENE_FACTOR,
   inclinationScale = 1,
 ) {
+  const precise = bodyPositionKmAt(planet.id, timestampMs)
+  if (precise) return toScenePosition(new THREE.Vector3(precise[0]/149597870.7, precise[2]/149597870.7, precise[1]/149597870.7),distanceSceneFactor,inclinationScale)
   const elements = orbitalElements(planet)
   const daysSinceJ2000 = (timestampMs - J2000_MS) / DAY_MS
   const meanLongitude = elements.meanLongitudeDeg

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1.0",
+  "sites": [{
+    "id": "ksc-lc39a", "name": "Kennedy Space Center – LC 39A",
+    "latitudeDeg": 28.608422, "longitudeDeg": -80.604133, "altitudeM": 0,
+    "active": true, "selectable": true, "country": "USA",
+    "coordinateSource": "https://www.nasa.gov/wp-content/uploads/2023/04/sp-4029.pdf",
+    "altitudeSource": "Spherical sea-level reference; actual pad elevation must be supplied for precision work.",
+    "downrangeSafetyCorridors": []
+  }]
+}

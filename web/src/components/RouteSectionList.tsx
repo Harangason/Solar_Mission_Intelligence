@@ -44,6 +44,8 @@ export function RouteSectionList({
 }: RouteSectionListProps) {
   const [wizardOpen, setWizardOpen] = useState(false)
   const [editingSection, setEditingSection] = useState<RouteSectionDefinition | null>(null)
+  const [editingStep, setEditingStep] = useState<1 | 3>(1)
+  const [deleteSectionId, setDeleteSectionId] = useState<string | null>(null)
 
   return (
     <section className="route-section-list" aria-labelledby="route-sections-title">
@@ -116,6 +118,7 @@ export function RouteSectionList({
                       title="Passage bearbeiten"
                       onClick={() => {
                         onEdit(section.id)
+                        setEditingStep(3)
                         setEditingSection(section)
                       }}
                     >
@@ -129,11 +132,16 @@ export function RouteSectionList({
                   <td>−{section.deltaVMinusKmS.toFixed(1)} / +{section.deltaVPlusKmS.toFixed(1)} km/s</td>
                   <td>
                     <div className="route-section-actions">
-                      <button type="button" className={isActive ? 'selected' : ''} onClick={() => onEdit(section.id)}>
-                        {isActive ? 'Aktiv' : 'Bearbeiten'}
+                      <button type="button" className={isActive ? 'selected' : ''} aria-pressed={isActive} onClick={() => onEdit(section.id)}>
+                        {isActive ? 'Ausgewählt' : 'Auswählen'}
                       </button>
+                      <button type="button" onClick={() => { onEdit(section.id); setEditingStep(1); setEditingSection(section) }}>Bearbeiten</button>
                       <button type="button" onClick={() => onPreview(section.id)}>Route ansehen</button>
-                      <button type="button" className="danger" onClick={() => onDelete(section.id)}>Löschen</button>
+                      {deleteSectionId === section.id ? <span className="route-delete-confirmation" role="group" aria-label={`Abschnitt ${index + 1} wirklich löschen?`}>
+                        <span>Abschnitt löschen?</span>
+                        <button type="button" autoFocus onClick={() => setDeleteSectionId(null)}>Abbrechen</button>
+                        <button type="button" className="danger" onClick={() => { onDelete(section.id); setDeleteSectionId(null) }}>Bestätigen</button>
+                      </span> : <button type="button" className="danger" onClick={() => setDeleteSectionId(section.id)}>Löschen …</button>}
                     </div>
                   </td>
                 </tr>
@@ -141,7 +149,7 @@ export function RouteSectionList({
             })}
             {sections.length === 0 && (
               <tr className="route-section-empty-row">
-                <td colSpan={6}>Keine Musterroute und keine implizite Abhängigkeit. Das Projekt ist leer.</td>
+                <td colSpan={6}>Noch keine Route geplant. Lege über „+ Neu“ deinen ersten Abschnitt an.</td>
               </tr>
             )}
           </tbody>
@@ -167,7 +175,7 @@ export function RouteSectionList({
           suggestedOriginId={editingSection.originId}
           suggestedTargetId={editingSection.targetId}
           initialSection={editingSection}
-          initialStep={3}
+          initialStep={editingStep}
           mode="edit"
           onCancel={() => setEditingSection(null)}
           onSubmit={(section) => {

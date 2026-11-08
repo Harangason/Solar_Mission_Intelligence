@@ -1,3 +1,4 @@
+import { bodyPositionKmAt } from './bodyEphemerides'
 import * as THREE from 'three'
 
 import type { MoonData } from './types'
@@ -64,6 +65,11 @@ export function moonPositionAt(
   timestampMs: number,
   displayDistance: number,
 ) {
+  const precise = bodyPositionKmAt(moon.id,timestampMs), parent = bodyPositionKmAt(moon.parentId,timestampMs)
+  if (precise && parent && moon.semiMajorAxisKm) {
+    const relative = new THREE.Vector3(precise[0]-parent[0],precise[2]-parent[2],precise[1]-parent[1])
+    return relative.multiplyScalar(displayDistance/moon.semiMajorAxisKm)
+  }
   const fallbackPhase = stableFraction(moon.id) * Math.PI * 2
   const period = moon.orbitalPeriodDays ?? 80 + stableFraction(`${moon.id}-period`) * 900
   const elapsedDays = (timestampMs - epochTimestamp(moon.epoch)) / DAY_MS

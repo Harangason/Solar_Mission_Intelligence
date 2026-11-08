@@ -9,11 +9,12 @@ from threading import Lock
 from uuid import uuid4
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from services.runtime_paths import LOG_DIRECTORY, STORAGE_ROOT as PROJECT_ROOT
+
 AI_AUDIT_LOGS = {
-    "interaction": PROJECT_ROOT / "logs" / "ai_interaction.jsonl",
-    "calculation": PROJECT_ROOT / "logs" / "ai_calculation.jsonl",
-    "plausibility": PROJECT_ROOT / "logs" / "ai_plausibility.jsonl",
+    "interaction": LOG_DIRECTORY / "ai_interaction.jsonl",
+    "calculation": LOG_DIRECTORY / "ai_calculation.jsonl",
+    "plausibility": LOG_DIRECTORY / "ai_plausibility.jsonl",
 }
 _WRITE_LOCK = Lock()
 _SENSITIVE_KEYS = {

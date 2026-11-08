@@ -45,3 +45,34 @@ noch ueber die Variantenauswahl als geplante Loesung uebernommen werden.
 Der Zielkorridor bietet Seite, Draufsicht und `Von der Sonne` als Ansichten
 desselben raeumlichen Vektors. Der Schalter `3D - raeumliche Kontrolle`
 wechselt mit unveraendertem Routen- und Korridorzustand in die Three.js-Szene.
+
+
+## Oberfläche und Projektaktionen
+
+Die Oberfläche orientiert sich an der Application-Site
+(https://application-martin-drexler.vercel.app/): nummerierte Seitennavigation,
+IBM Plex Sans, rechteckige Bedienelemente und Carbon-Farben. Die Schrift liegt
+mit SIL-OFL-Lizenz in `web/public/fonts/`; ein externer Fontdienst ist nicht nötig.
+`ui-harmony.css` enthält die gemeinsame Gestaltung und den Hell-/Dunkelmodus.
+Die astronomischen Canvas- und SVG-Flächen behalten ihre wissenschaftliche Farbgebung.
+
+Übersicht, Berechnung, 2D und 3D verwenden denselben Projektzustand.
+Auf schmalen Bildschirmen lässt sich die Navigation über einen Menüknopf öffnen.
+Projekt öffnen, Speichern und Kopie speichern sind in jeder Ansicht verfügbar.
+Der Speicherstatus berücksichtigt Änderungen während einer laufenden Speicherung.
+Beim Öffnen über ungespeicherten Änderungen und beim Löschen erscheint eine
+Bestätigung. Laufende Projektaktionen sperren Doppelklicks, Auswahl und Dialogschließen;
+Serverfehler bleiben mit einer Wiederholungsmöglichkeit sichtbar. Projektanfragen
+haben ein Zeitlimit von 20 Sekunden. In der Abschnittsliste sind Auswählen,
+Bearbeiten und Löschen getrennte Aktionen.
+
+Zusätzliche Regressionstests:
+
+```powershell
+npm run test:project-requests
+npm run test:ui-assets
+```
+
+Der Assettest prüft alle in `planetTextures.ts` referenzierten JPEGs. Eine fehlende
+Jupiter-Textur aus dem zusammengeführten `main`-Stand wurde wiederhergestellt,
+da sie die 3D-Ansicht beim Laden abbrechen ließ.

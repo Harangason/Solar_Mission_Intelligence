@@ -89,6 +89,7 @@ interface ParameterPanelProps {
   onVisualChange: (visual: VisualConfig) => void
   onDraftChange: (config: MissionConfig) => void
   onApplyTrajectoryPlan: (result: import('../types').GenericTrajectoryPlannerResult) => void
+  showTrajectoryPlanner?: boolean
 }
 
 export function ParameterPanel({
@@ -112,6 +113,7 @@ export function ParameterPanel({
   onVisualChange,
   onDraftChange,
   onApplyTrajectoryPlan,
+  showTrajectoryPlanner = true,
 }: ParameterPanelProps) {
   const [moonSearch, setMoonSearch] = useState('')
   const [propulsionWizardOpen, setPropulsionWizardOpen] = useState(false)
@@ -168,12 +170,12 @@ export function ParameterPanel({
     <aside className="planet-panel parameter-panel" aria-label="Objekt- und Simulationsparameter">
       <p className="eyebrow">Objektdaten & Simulation</p>
 
-      <TrajectoryPlannerPanel
+      {showTrajectoryPlanner && <TrajectoryPlannerPanel
         planets={planets}
         moons={moons}
         defaultStartDate={draft.startDate}
         onApply={onApplyTrajectoryPlan}
-      />
+      />}
 
       <details>
         <summary>Objekt</summary>

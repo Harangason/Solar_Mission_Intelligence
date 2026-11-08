@@ -426,45 +426,13 @@ def _propagate_lambert_segment(
     gravitational_parameter: float = MU_SUN,
 ) -> tuple[list[dict], tuple, tuple]:
     """Adaptively propagate the heliocentric Lambert arc for display and audit."""
-    initial_state = [*start_position, *start_velocity]
-
-    def derivative(_time: float, state) -> list[float]:
-        position = state[:3]
-        radius = sqrt(sum(component * component for component in position))
-        acceleration_factor = -gravitational_parameter / max(radius**3, 1e-18)
-        return [
-            state[3], state[4], state[5],
-            position[0] * acceleration_factor,
-            position[1] * acceleration_factor,
-            position[2] * acceleration_factor,
-        ]
-
-    # Cosine spacing keeps many display samples near both patched-conic
-    # boundaries, where the apparent curvature and speed change most.  The
-    # integrator itself remains adaptive; this only controls emitted vertices.
-    evaluation_times = [
-        flight_seconds * 0.5 * (1 - cos(pi * index / sample_count))
-        for index in range(sample_count + 1)
-    ]
-    evaluation_times[-1] = flight_seconds
-    solution = solve_ivp(
-        derivative,
-        (0.0, flight_seconds),
-        initial_state,
-        method="DOP853",
-        t_eval=evaluation_times,
-        rtol=2e-11,
-        atol=[1e-3, 1e-3, 1e-3, 1e-10, 1e-10, 1e-10],
-    )
-    if not solution.success or len(solution.t) != sample_count + 1:
-        raise RuntimeError(f"Adaptive Lambert-Propagation fehlgeschlagen: {solution.message}")
-    trajectory = [{
-        "elapsedDays": start_day + float(solution.t[index]) / DAY_SECONDS,
-        "positionKm": [float(solution.y[axis][index]) for axis in range(3)],
-    } for index in range(sample_count + 1)]
-    final_position = tuple(float(solution.y[axis][-1]) for axis in range(3))
-    final_velocity = tuple(float(solution.y[axis][-1]) for axis in range(3, 6))
-    return trajectory, final_position, final_velocity
+    from solver.nbody_propagation import propagate_conic
+    result = propagate_conic((start_position, start_velocity), flight_seconds,
+                             gravitational_parameter, sample_count=sample_count)
+    trajectory = [{"elapsedDays": start_day + p["elapsedSeconds"] / DAY_SECONDS,
+                   "positionKm": p["positionKm"], "velocityKmS": p["velocityKmS"]}
+                  for p in result["trajectory"]]
+    return trajectory, tuple(result["finalPositionKm"]), tuple(result["finalVelocityKmS"])
 
 
 def _solar_asymptote_direction(position: tuple, velocity: tuple) -> tuple | None:
@@ -1103,7 +1071,7 @@ def _hyperbola_relative_state(
     return position, velocity, relative_seconds
 
 
-def simulate_waypoint_route(values: dict | None, include_mission_result: bool = False) -> dict:
+def _legacy_waypoint_route(values: dict | None, include_mission_result: bool = False) -> dict:
     """Calculate state-continuous heliocentric/SOI/hyperbolic route segments."""
     values = values or {}
     requested_mission_values = dict(values.get("mission") or {})
@@ -2177,7 +2145,7 @@ def simulate_waypoint_route(values: dict | None, include_mission_result: bool = 
     return payload
 
 
-def simulate_direct_solar_route(values: dict | None, include_mission_result: bool = False) -> dict:
+def _legacy_direct_solar_route(values: dict | None, include_mission_result: bool = False) -> dict:
     """Direct 3D Solar-Oberth alternative without a planetary waypoint."""
     values = values or {}
     requested_mission_values = dict(values.get("mission") or {})
@@ -2314,3 +2282,57 @@ def simulate_direct_solar_route(values: dict | None, include_mission_result: boo
         payload["mission"] = result.to_dict()
     return payload
 
+
+
+def _common_solar_request(values, waypoint, include_mission_result=False):
+    from datetime import timedelta
+    from solver.orbital import utc,timestamp
+    from planner.trajectory_planner import calculate_trajectory_plan,section_result_adapter
+    values=values or {};mission=dict(values.get('mission') or {})
+    start_date=mission.get('startDate') or timestamp(utc(__import__('datetime').datetime.now(__import__('datetime').timezone.utc)))
+    waypoints=[{'id':'solar-oberth','type':'solar_oberth','perihelionAU':mission.get('targetPerihelionAu',.05),'burnDeltaVKmS':mission.get('oberthDeltaVKmS',8),'desiredExitSpeedKmS':values.get('desiredSolarExitSpeedKmS',25),'maximumBurnDeltaVKmS':mission.get('oberthDeltaVKmS',8)}]
+    if waypoint:
+        waypoints.append({'id':'planet-flyby','type':'body_flyby','bodyId':values.get('waypointId','jupiter'),'targetDate':timestamp(utc(start_date)+timedelta(days=float(values.get('encounterDay',730)))),'flybyAltitudeKm':values.get('flybyAltitudeKm',100000),'entryCorridor':values.get('entryCorridor',{}),'aimpoint':values.get('flybyAimpoint',{})})
+    target={'type':'direction','rightAscensionDeg':values.get('targetRightAscensionDeg',217.43),'declinationDeg':values.get('targetDeclinationDeg',-62.68),'distanceAU':values.get('directionDistanceAU',50)}
+    result=calculate_trajectory_plan({'start':{'type':'orbit','bodyId':'earth','orbitAltitudeKm':mission.get('parkingOrbitAltitudeKm',400),'startDate':start_date},'target':target,'waypoints':waypoints,'mission':mission,'constraints':{'desiredSolarExitSpeedKmS':values.get('desiredSolarExitSpeedKmS',25)},'simulation':{'includeAudit':True,'sampleTrajectoryPoints':180,'propagationYears':max(20,float(mission.get('missionYears',20))),'highFidelityNBody':values.get('highFidelityNBody',False)}})
+    adapted=section_result_adapter(result,start_date)
+    adapted['summary'].update(finalTargetAlignmentDeg=result['summary'].get('targetAlignmentDeg',180),solarExitSpeedKmS=(result.get('solarBoundary') or {}).get('actualExitSpeedKmS',result['summary']['finalHeliocentricSpeedKmS']),requiredVectorDeltaVKmS=result['summary']['totalDeltaVKmS'],availableDeltaVKmS=result['input']['constraints'].get('maxTotalDeltaVKmS',0),angularChangeDeg=result['summary'].get('targetAlignmentDeg',180))
+    if include_mission_result:adapted['mission']=_route_mission_payload(result,mission)
+    return adapted
+
+
+def simulate_waypoint_route(values, include_mission_result=False):
+    return _common_solar_request(values,True,include_mission_result)
+
+
+def simulate_direct_solar_route(values, include_mission_result=False):
+    return _common_solar_request(values,False,include_mission_result)
+
+
+def _route_mission_payload(result,mission):
+    """Legacy mission presentation of these exact states, without re-simulation."""
+    from solver.trajectory import MissionConfig,MissionSummary
+    from solver.orbital import utc,timestamp
+    from datetime import timedelta
+    import numpy as np
+    points=result['trajectory'];config=MissionConfig.from_dict(mission).to_dict()
+    if any(p.get('massKg') is None for p in points):raise ValueError('Missionsübernahme benötigt einen vollständigen Fahrzeugnachweis.')
+    phase={'INITIAL_STATE':'EARTH_PARKING_ORBIT','EARTH_ESCAPE':'EARTH_ESCAPE','SUNDIVER_INJECTION':'SUNDIVER_TRANSFER','SOLAR_APPROACH':'SOLAR_APPROACH','SOLAR_OBERTH':'SOLAR_OBERTH_BURN'}
+    shown=[{**p,'phase':phase.get(p['phase'],'DEEP_SPACE_CRUISE')} for p in points]
+    events=[]
+    for e in result['events']:
+        day=float(e.get('elapsedDays',0));point=min(points,key=lambda p:abs(p['elapsedDays']-day));actual=e.get('stateAfter',point)
+        events.append({**e,'elapsedDays':day,'date':timestamp(utc(result['start']['date'])+timedelta(days=day)),
+            'phase':phase.get(e['type'],'DEEP_SPACE_CRUISE'),'name':e['type'],'description':'Ereignis aus derselben propagierten Route',
+            'massKg':actual['massKg'],'speedKmS':float(np.linalg.norm(actual['velocityKmS'])),'positionKm':actual['positionKm'],'velocityKmS':actual['velocityKmS'],'warningLevel':'info' if e.get('applied',True) else 'warning'})
+    solar=next((b for b in result['maneuvers'] if b['type']=='SOLAR_OBERTH'),None)
+    peri=min(float(np.linalg.norm(p['positionKm']))/AU_KM for p in points)
+    warnings=[*result['warnings'],'Missionsdarstellung der Impulsroute; kontinuierliche Antriebe und Navigation werden in diesem Planner-Lauf nicht simuliert.']
+    config.update(electricSailEnabled=False,kalmanEnabled=False)
+    summary=MissionSummary(status='WARNING' if result['summary']['feasible'] else 'ABORT',total_flight_days=result['summary']['totalFlightDays'],perihelion_au=peri,max_solar_flux_w_m2=1361/peri**2,
+        pre_burn_speed_km_s=float(np.linalg.norm(solar['stateBefore']['velocityKmS'])) if solar else float(np.linalg.norm(points[0]['velocityKmS'])),
+        post_burn_speed_km_s=float(np.linalg.norm(solar['stateAfter']['velocityKmS'])) if solar else float(np.linalg.norm(points[-1]['velocityKmS'])),
+        achieved_burn_delta_v_km_s=solar['deltaVKmS'] if solar and solar['applied'] else 0,propellant_used_kg=sum(b['propellantUsedKg'] or 0 for b in result['maneuvers'] if b['applied']),
+        payload_mass_kg=config['payloadMassKg'],distance_au_by_year={},speed_km_s_by_year={},electric_sail_gain_km_s=0,navigation_cycles=0,position_uncertainty_km=0,velocity_uncertainty_km_s=0,max_planetary_perturbation_mm_s2=0,propulsion_report=[],time_to_saturn_days=None,time_to_voyager_distance_days=None,warnings=warnings).to_dict()
+    summary.update(totalDeltaVKmS=result['summary']['totalDeltaVKmS'],model=result['summary']['model'])
+    return {'schemaVersion':result['schemaVersion'],'calculationBuild':result['calculationBuild'],'config':config,'events':events,'trajectory':shown,'summary':summary,'validation':result['validation'],'maneuvers':result['maneuvers'],'segments':result['segments']}

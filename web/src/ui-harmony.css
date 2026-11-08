@@ -1,0 +1,242 @@
+/* Application reference: Carbon colours, Plex type, numbered 280px navigation.
+   The scientific canvases retain their own palette and coordinate styling. */
+@font-face { font-family: 'IBM Plex Sans'; src: url('/fonts/IBMPlexSans-Light-Latin1.woff2') format('woff2'); font-style: normal; font-weight: 300; font-display: swap; }
+@font-face { font-family: 'IBM Plex Sans'; src: url('/fonts/IBMPlexSans-Regular-Latin1.woff2') format('woff2'); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'IBM Plex Sans'; src: url('/fonts/IBMPlexSans-SemiBold-Latin1.woff2') format('woff2'); font-style: normal; font-weight: 600 900; font-display: swap; }
+:root {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  --ui-bg: #fff; --ui-surface: #f4f4f4; --ui-raised: #fff;
+  --ui-selected: #e0e0e0; --ui-line: #d6d6d6; --ui-line-strong: #8d8d8d;
+  --ui-text: #161616; --ui-muted: #525252; --ui-accent: #0f62fe;
+  --ui-accent-hover: #0353e9; --ui-on-accent: #fff; --ui-danger: #b81922;
+  --ui-focus: #0f62fe; --ui-sidebar: 280px; --ui-header: 80px;
+  color-scheme: light; color: var(--ui-text); background: var(--ui-bg);
+}
+:root[data-theme='dark'] {
+  --ui-bg: #161616; --ui-surface: #262626; --ui-raised: #262626;
+  --ui-selected: #393939; --ui-line: #525252; --ui-line-strong: #8d8d8d;
+  --ui-text: #f4f4f4; --ui-muted: #c6c6c6; --ui-focus: #78a9ff; --ui-danger: #ff8389;
+  color-scheme: dark;
+}
+body { background: var(--ui-bg); color: var(--ui-text); }
+button, input, select, textarea { font-family: inherit; }
+button { cursor: pointer; }
+.app-shell { display: block; min-height: 100dvh; }
+.app-shell button:focus-visible, .app-shell a:focus-visible, .app-shell input:focus-visible,
+.app-shell textarea:focus-visible, .app-shell select:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
+.app-shell button:disabled { cursor: not-allowed; opacity: .45; transform: none; box-shadow: none; }
+.skip-link { position: fixed; z-index: 100; top: -80px; left: 20px; padding: 14px 20px; background: var(--ui-bg); color: var(--ui-text); }
+.skip-link:focus { top: 12px; }
+.site-navigation { position: fixed; inset: 0 auto 0 0; z-index: 20; width: var(--ui-sidebar); padding: 30px 18px 20px; display: flex; flex-direction: column; overflow-y: auto; background: var(--ui-surface); border-right: 1px solid var(--ui-line); }
+.brand { padding: 0; gap: 12px; color: var(--ui-text); font-size: 18px; font-weight: 400; text-align: left; letter-spacing: 0; }
+.brand-mark { display: grid; place-items: center; flex-shrink: 0; width: 42px; height: 42px; border-radius: 0; color: #fff; background: #0f62fe; box-shadow: none; font-size: 16px; font-weight: 600; }
+.brand small { display: block; margin-top: 4px; color: var(--ui-muted); text-transform: uppercase; font-size: 9px; letter-spacing: .12em; }
+.workspace-navigation { margin-top: 38px; }
+.workspace-navigation h2 { margin: 0 12px 18px; font-size: 20px; font-weight: 400; }
+.nav-item { display: flex; gap: 16px; width: 100%; padding: 16px 10px; border: 0; border-left: 3px solid transparent; background: transparent; text-align: left; color: var(--ui-text); }
+.nav-item:hover { background: var(--ui-selected); }
+.nav-item[aria-current='page'] { background: var(--ui-selected); border-left-color: var(--ui-accent); }
+.nav-number { padding-top: 2px; font: 12px/1.5 ui-monospace, monospace; color: var(--ui-focus); }
+.nav-item strong { display: block; font-size: 14px; font-weight: 600; }
+.nav-item small { display: block; margin-top: 5px; font-size: 12px; line-height: 1.4; color: var(--ui-muted); }
+.navigation-footer { margin-top: auto; padding: 40px 12px 0; color: var(--ui-muted); }
+.navigation-footer span { font-size: 9px; letter-spacing: .12em; }
+.navigation-footer p { font-size: 13px; }
+.navigation-toggle { display: none; }
+.site-content { margin-left: var(--ui-sidebar); min-width: 0; }
+.workspace { min-width: 0; outline: none; }
+.topbar { min-height: var(--ui-header); height: auto; padding: 16px 32px; gap: 20px; border-bottom: 1px solid var(--ui-line); background: var(--ui-bg); backdrop-filter: none; }
+.project-identity { display: grid; gap: 3px; min-width: 100px; }
+.project-identity strong { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.project-identity > span { color: var(--ui-muted); font-size: 12px; }
+.topbar-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.shell-button, .theme-toggle, .navigation-toggle { display: inline-flex; justify-content: space-between; align-items: center; gap: 24px; min-height: 44px; padding: 10px 16px; border: 1px solid var(--ui-line-strong); border-radius: 0; color: var(--ui-text); background: transparent; font-size: 14px; line-height: 1.3; }
+.navigation-toggle { display: none; }
+.theme-toggle { width: 44px; padding: 10px; justify-content: center; font-size: 22px; }
+.shell-button:hover:not(:disabled), .theme-toggle:hover { background: var(--ui-selected); }
+.shell-button.primary { background: var(--ui-accent); border-color: var(--ui-accent); color: var(--ui-on-accent); }
+.shell-button.primary:hover:not(:disabled) { background: var(--ui-accent-hover); }
+.project-feedback { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0; padding: 12px 32px; border-bottom: 1px solid var(--ui-line); border-left: 3px solid var(--ui-accent); color: var(--ui-muted); background: var(--ui-surface); font-size: 13px; }
+.project-feedback.error { border-left-color: var(--ui-danger); color: var(--ui-danger); }
+.chooser { width: min(1200px, 100%); margin: 0 auto; padding: 64px 42px 40px; text-align: left; }
+.eyebrow { color: var(--ui-muted); font-size: 11px; font-weight: 400; letter-spacing: .16em; }
+.chooser h1 { max-width: none; margin: 16px 0 0; font-size: clamp(38px, 4.7vw, 68px); font-weight: 300; line-height: 1.08; letter-spacing: -.035em; }
+.intro { max-width: 670px; margin: 24px 0; color: var(--ui-muted); font-size: 18px; line-height: 1.6; }
+.overview-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 64px; }
+.overview-actions .shell-button { min-height: 48px; }
+.overview-heading { display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid var(--ui-line); padding-top: 24px; margin-bottom: 18px; }
+.overview-heading p { margin: 0; }
+.overview-heading > span { font-size: 12px; color: var(--ui-muted); }
+.choice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--ui-line); }
+.choice-card { display: flex; flex-direction: column; min-width: 0; min-height: 260px; padding: 24px; border: 0; border-right: 1px solid var(--ui-line); border-radius: 0; background: var(--ui-surface); color: var(--ui-text); text-align: left; transition: background .15s; }
+.choice-card:last-child { border-right: 0; }
+.choice-card::after { display: none; }
+.choice-card:hover, .choice-card:focus-visible { transform: none; background: var(--ui-selected); box-shadow: none; }
+.choice-number { margin: 0 0 40px; color: var(--ui-focus); font: 12px ui-monospace, monospace; }
+.choice-card strong { display: flex; justify-content: space-between; gap: 8px; width: 100%; font-size: 24px; font-weight: 300; }
+.choice-card strong span { color: var(--ui-focus); font-size: 20px; }
+.choice-card > span:last-child { margin-top: 14px; color: var(--ui-muted); font-size: 14px; line-height: 1.6; }
+.mission-overview { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 48px; padding: 28px 0; border-top: 1px solid var(--ui-line); }
+.mission-overview h2 { margin: 0; font-size: 28px; font-weight: 300; }
+.mission-overview p:not(.eyebrow) { max-width: 400px; color: var(--ui-muted); font-size: 14px; line-height: 1.6; }
+.mission-overview dl { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 0; }
+.mission-overview dt { color: var(--ui-muted); font-size: 12px; }
+.mission-overview dd { margin: 16px 0 0; font-size: 26px; font-weight: 300; }
+.view-panel { width: calc(100% - 64px); max-width: 1600px; padding-top: 32px; }
+.view-heading { align-items: flex-start; gap: 24px; }
+.view-heading h1 { font-size: clamp(26px, 3vw, 42px); font-weight: 300; }
+.view-heading > p, .loading, .status-message { color: var(--ui-muted); }
+.loading { padding: 48px; }
+/* Shared control surfaces; SVG strokes, fills and canvas internals are intentionally scoped out. */
+.app-shell :is(.ai-chat-panel, .route-section-list, .route-project-empty, .two-d-planet-details,
+.planet-corridor-planner, .two-d-actionbar, .trajectory-planner-panel, .target-controls, .parameter-panel,
+.route-section-wizard, .route-preview-dialog, .route-calculation-dialog, .activity-settings-dialog) {
+  color: var(--ui-text); background: var(--ui-surface); border-color: var(--ui-line); border-radius: 0; box-shadow: none;
+}
+.app-shell :is(.ai-chat-panel, .route-section-list, .two-d-planet-details, .planet-corridor-planner, .parameter-panel,
+.route-section-wizard, .route-calculation-dialog, .activity-settings-dialog) :is(h2, h3, h4, legend, label, p, dt, dd, small, th, td, strong) { color: inherit; }
+.app-shell :is(.ai-chat-message, .ai-chat-message.user, .ai-chat-message.assistant, .project-list > label,
+.two-d-planet-details dl div, .wizard-content fieldset, .route-section-list tbody tr, .active-route-section-label,
+.ai-plausibility-panel, .ai-calculation-panel) { color: var(--ui-text); background: var(--ui-raised); border-color: var(--ui-line); border-radius: 0; }
+.app-shell :is(.ai-chat-panel, .two-d-planet-details) { min-width: 0; }
+.app-shell .ai-chat-panel { font-size: 14px; }
+.app-shell .ai-chat-panel :is(small, p, li, button, input) { font-size: 12px; line-height: 1.5; }
+.app-shell :is(.ai-chat-panel header span, .ai-plausibility-panel span, .ai-calculation-panel span,
+.active-route-section-label strong, .two-d-actionbar output, .orbit-zoom-control, .route-section-number) { color: var(--ui-muted); }
+.app-shell :is(.route-section-list th, .route-section-list td) { padding: 12px 10px; font-size: 13px; border-color: var(--ui-line); }
+.app-shell .route-section-list td strong { font-size: 14px; }
+.app-shell .route-section-list tr.active, .app-shell .project-list > label.selected { background: var(--ui-selected); }
+.app-shell :is(.route-section-wizard, .route-preview-dialog, .route-calculation-dialog, .activity-settings-dialog) > :is(header, footer),
+.app-shell .project-dialog form > footer { background: var(--ui-surface); border-color: var(--ui-line); }
+.app-shell :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), select, textarea) { color: var(--ui-text); background: var(--ui-raised); border: 1px solid var(--ui-line-strong); border-radius: 0; min-height: 40px; }
+.app-shell :is(input[type='checkbox'], input[type='radio'], input[type='range']) { accent-color: var(--ui-accent); }
+.app-shell .workspace :is(.view-panel, dialog, .parameter-panel) button { min-height: 36px; border-radius: 0; color: var(--ui-text); border-color: var(--ui-line-strong); background: var(--ui-raised); font-size: 13px; }
+.app-shell .workspace :is(.view-panel, dialog, .parameter-panel) button:hover:not(:disabled) { color: var(--ui-text); border-color: var(--ui-focus); background: var(--ui-selected); }
+.app-shell .workspace :is(.view-panel, dialog, .parameter-panel) :is(button.primary, button.active, button.selected, button[aria-pressed='true'], .route-section-new) { color: var(--ui-on-accent); background: var(--ui-accent); border-color: var(--ui-accent); }
+.app-shell .workspace :is(.view-panel, dialog, .parameter-panel) button.danger { color: var(--ui-danger); }
+.app-shell .project-dialog .confirm-danger { background: #da1e28; border-color: #da1e28; color: #fff; }
+.route-section-actions { flex-wrap: wrap; }
+.route-delete-confirmation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.route-delete-confirmation > span { font-size: 12px; }
+.project-dialog { max-width: min(660px, calc(100vw - 32px)); }
+.project-dialog form { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.project-dialog form > footer { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 22px; border-top: 1px solid var(--ui-line); }
+.project-dialog form > footer > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-shell .project-dialog button { min-height: 44px; padding: 10px 16px; }
+.app-shell .project-dialog .wizard-close { padding: 4px; }
+.project-dialog .wizard-content { overflow: auto; }
+.project-dialog .project-save-fields p, .project-dialog .project-list small { color: var(--ui-muted); font-size: 13px; line-height: 1.6; }
+.project-dialog .project-save-fields label { font-size: 14px; }
+.project-dialog .project-save-fields :is(input, textarea) { padding: 12px; font-size: 16px; }
+.project-dialog-progress { padding: 12px 0; color: var(--ui-muted); }
+.project-confirmation { padding: 12px 0; }
+.project-confirmation h3 { font-size: 22px; font-weight: 400; }
+.project-confirmation p { line-height: 1.6; }
+.app-shell .project-dialog-error { color: var(--ui-danger); padding: 12px; border-left: 3px solid var(--ui-danger); }
+.project-dialog::backdrop { background: rgb(0 0 0 / .45); backdrop-filter: blur(2px); }
+/* Keep scientific graphics legible in either interface theme. */
+.orbital-plot, .local-planet-three-d, .scene-wrap { color-scheme: dark; border-radius: 0; }
+.two-d-footnote { color: var(--ui-muted); }
+@media (min-width: 821px) {
+  .mission-layout { --mission-planner-height: calc(100dvh - var(--ui-header)); height: var(--mission-planner-height); max-height: none; flex-basis: auto; }
+  .mission-layout > .scene-wrap, .mission-layout > .parameter-panel { height: var(--mission-planner-height); }
+}
+@media (max-width: 1250px) {
+  :root { --ui-sidebar: 240px; }
+  .site-navigation { padding-inline: 12px; }
+  .topbar { padding: 16px 24px; flex-wrap: wrap; }
+  .topbar-actions { justify-content: flex-start; }
+  .view-heading { flex-direction: column; }
+  .view-heading .ai-chat-panel { width: 100%; flex-basis: auto; }
+  .chooser { padding: 48px 32px 32px; }
+  .choice-card { padding: 20px; }
+  .choice-card strong { font-size: 22px; }
+}
+@media (max-width: 900px) {
+  .site-navigation { position: relative; width: 100%; padding: 16px 24px; border-right: 0; border-bottom: 1px solid var(--ui-line); overflow: visible; }
+  .site-navigation-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .navigation-toggle { display: inline-flex; font-size: 13px; }
+  .workspace-navigation { display: none; margin-top: 24px; }
+  .workspace-navigation.is-open { display: block; }
+  .navigation-footer { display: none; }
+  .site-content { margin-left: 0; }
+  .choice-card { min-height: 230px; }
+}
+@media (max-width: 620px) {
+  .site-navigation { padding: 14px 16px; }
+  .brand { font-size: 16px; }
+  .brand-mark { width: 36px; height: 36px; }
+  .topbar { padding: 16px; gap: 14px; }
+  .topbar-actions { width: 100%; gap: 8px; }
+  .topbar-actions .shell-button { flex: 1 1 auto; padding-inline: 10px; font-size: 13px; }
+  .topbar-actions .copy-project { order: 1; flex-basis: 100%; }
+  .chooser { width: 100%; padding: 36px 20px; }
+  .chooser h1 { font-size: 42px; }
+  .intro { font-size: 16px; }
+  .overview-actions { margin-bottom: 40px; }
+  .overview-heading { flex-direction: column; gap: 8px; }
+  .choice-grid { grid-template-columns: 1fr; }
+  .choice-card { min-height: 190px; border-right: 0; border-bottom: 1px solid var(--ui-line); }
+  .choice-card:last-child { border-bottom: 0; }
+  .choice-number { margin-bottom: 20px; }
+  .mission-overview { grid-template-columns: 1fr; }
+  .view-panel { width: calc(100% - 32px); }
+  .project-dialog form > footer { align-items: stretch; flex-direction: column-reverse; padding: 16px; }
+  .project-dialog form > footer > div { flex-direction: column-reverse; }
+  .project-feedback { padding-inline: 16px; flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { .app-shell *, .app-shell *::before, .app-shell *::after { scroll-behavior: auto; transition: none; } }
+
+/* Text on control surfaces uses theme contrast, including legacy wizard labels. */
+.app-shell .workspace :is(.ai-chat-panel, .route-section-list, .route-project-empty, .trajectory-planner-panel,
+.two-d-planet-details, .corridor-planner-controls, .parameter-panel, .wizard-content, .wizard-progress,
+.activity-settings-dialog, .route-calculation-dialog) :is(p, small, span, b, strong, label, legend, dt, dd, td, th, output, summary, li):not(svg *):not(button *) {
+  color: var(--ui-text);
+}
+.app-shell .workspace :is(.trajectory-planner-panel > summary, .ai-chat-connection, .route-project-empty) { color: var(--ui-text); }
+.app-shell .workspace .ai-chat-status.unavailable { color: var(--ui-muted); }
+.app-shell .workspace .ai-chat-status.ready { color: #198038; }
+.app-shell .workspace .wizard-progress li :is(span, b), .app-shell .workspace .wizard-progress li.active span { color: var(--ui-text); background: var(--ui-selected); border-color: var(--ui-line); }
+.app-shell .workspace .wizard-progress li.active { border-color: var(--ui-accent); }
+.app-shell .workspace .wizard-content :is(.wizard-route-preview, .wizard-summary, .wizard-orbit-section, .wizard-field-grid) { background: var(--ui-raised); color: var(--ui-text); border-color: var(--ui-line); }
+.app-shell .workspace .two-d-actionbar .retrospective-search-button:not([aria-pressed='true']) { background: var(--ui-raised); color: var(--ui-text); border-color: var(--ui-line-strong); }
+.app-shell .workspace .route-section-list tr.route-section-empty-row td { color: var(--ui-muted); }
+.app-shell .workspace .trajectory-planner-panel > summary { min-height: 44px; padding: 12px 16px; font-size: 14px; }
+.app-shell .workspace .wizard-content :is(label, output, p) { font-size: 14px; }
+.app-shell .workspace .wizard-content label { gap: 12px; }
+.app-shell .workspace .wizard-content output { color: var(--ui-text); }
+.app-shell .workspace :is(.route-section-wizard, .route-preview-dialog, .activity-settings-dialog) footer button { min-height: 44px; }
+
+.app-shell .workspace :is(.wizard-passage-modes label, .wizard-summary div, .wizard-glossary) { background: var(--ui-raised); border: 1px solid var(--ui-line); border-radius: 0; }
+.app-shell .workspace .wizard-passage-modes label:has(input:checked) { border-color: var(--ui-accent); background: var(--ui-selected); box-shadow: inset 3px 0 var(--ui-accent); }
+.app-shell .workspace .wizard-progress li { color: var(--ui-muted); }
+.app-shell .workspace .wizard-progress li.complete { color: var(--ui-text); }
+.app-shell .workspace .wizard-progress li.complete span { color: #fff; background: var(--ui-accent); border-color: var(--ui-accent); }
+.app-shell .workspace .corridor-feasibility-status { color: var(--ui-text); background: var(--ui-raised); border-color: var(--ui-line); border-radius: 0; }
+.app-shell .workspace .corridor-feasibility-status strong { color: #198038; }
+.app-shell .workspace .corridor-feasibility-status.blocked strong { color: var(--ui-danger); }
+.app-shell .workspace .two-d-actionbar .retrospective-search-button { color: var(--ui-text) !important; background: var(--ui-raised) !important; border-color: var(--ui-line-strong) !important; }
+.app-shell .workspace .two-d-actionbar .retrospective-search-button.active { color: #fff !important; background: var(--ui-accent) !important; border-color: var(--ui-accent) !important; }
+/* Contain the table's absolutely positioned accessible labels on narrow screens. */
+.route-section-table-wrap, .activity-table-wrap, .calculation-table-wrap { position: relative; }
+.app-shell .workspace :is(.activity-settings-toolbar, .activity-table-wrap th, .calculation-panel,
+.calculation-table th, .calculation-table thead tr:nth-child(2) th) { background: var(--ui-raised); border-color: var(--ui-line); }
+.app-shell .workspace :is(.calculation-progress, .calculation-funnel > article, .calculation-metrics article,
+.calculation-meta span, .calculation-comparison) { border-color: var(--ui-line); border-radius: 0; }
+.app-shell .workspace .calculation-panel :is(svg, .calculation-route-projection) { background: #071120; }
+.app-shell .workspace :is(.activity-csv-download, .activity-settings-dialog footer output) { color: var(--ui-text); }
+.app-shell .workspace :is(.activity-settings-error, .calculation-error, .trajectory-planner-error) { color: var(--ui-danger); }
+.app-shell .workspace .activity-status.success { color: #198038; }
+.app-shell .workspace .activity-status.error { color: var(--ui-danger); }
+.app-shell .workspace .activity-status.rejected { color: var(--ui-muted); }
+.scene-wrap :is(.time-controls, .planet-view-actions, .scene-help) { --ui-raised: #262626; --ui-text: #f4f4f4; border-radius: 0; background: rgb(22 22 22 / .94); border-color: #525252; }
+.scene-wrap :is(.time-controls, .planet-view-actions) button { min-height: 36px; padding: 8px 12px; border-radius: 0; font-size: 12px; }
+.scene-wrap :is(.time-controls, .planet-view-actions) button:focus-visible { outline-color: #78a9ff; }
+.scene-wrap :is(.time-controls, .planet-view-actions) button.active { background: #0f62fe; color: white; }
+@media (max-width: 620px) {
+  .app-shell .workspace :is(.view-panel, dialog) button { min-height: 44px; }
+  .app-shell .workspace .wizard-range-grid label { grid-template-columns: 1fr 44px; }
+  .app-shell .workspace .wizard-range-grid label > span { grid-column: 1 / -1; }
+  .app-shell .workspace .wizard-connection { grid-template-columns: 1fr; }
+  .app-shell .workspace .wizard-arrow { display: none; }
+}

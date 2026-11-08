@@ -47,6 +47,8 @@ def validate_interaction_actions(
                 raise ValueError("Die KI referenziert eine unbekannte 2D-Ansicht.")
             section_id = None
         else:
+            if not section_ids:
+                raise ValueError("Ohne Routenabschnitt kann kein Solverlauf vorgeschlagen werden.")
             section_id = None
             projection = None
 

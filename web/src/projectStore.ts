@@ -30,12 +30,25 @@ export interface StoredProject extends ProjectSummary {
   state: ProjectState
 }
 
-async function projectRequest<T extends object>(url: string, init?: RequestInit) {
-  const response = await fetch(url, init)
-  const payload = await response.json() as T | { error?: string }
-  if (!response.ok || 'error' in payload) {
-    throw new Error('error' in payload && payload.error ? payload.error : `HTTP ${response.status}`)
+async function projectRequest<T extends object>(url: string, init?: RequestInit): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) })
+  } catch (error) {
+    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+      throw new Error('Der Server antwortet nicht rechtzeitig. Bitte erneut versuchen.')
+    }
+    throw new Error('Projektserver nicht erreichbar. Bitte Verbindung prüfen und erneut versuchen.')
   }
+  if (response.ok && init?.method === 'DELETE') return {} as T
+  let payload: T | { error?: string }
+  try {
+    payload = await response.json()
+  } catch {
+    throw new Error(`Ungültige Serverantwort (HTTP ${response.status}). Bitte erneut versuchen.`)
+  }
+  if (!payload || typeof payload !== 'object') throw new Error('Der Server hat keine gültigen Projektdaten geliefert.')
+  if (!response.ok || 'error' in payload) throw new Error('error' in payload && payload.error ? payload.error : `HTTP ${response.status}`)
   return payload as T
 }
 
@@ -65,9 +78,5 @@ export function updateProject(projectId: string, name: string, description: stri
 }
 
 export async function deleteProject(projectId: string) {
-  const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' })
-  if (!response.ok) {
-    const payload = await response.json() as { error?: string }
-    throw new Error(payload.error ?? `HTTP ${response.status}`)
-  }
+  await projectRequest(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' })
 }

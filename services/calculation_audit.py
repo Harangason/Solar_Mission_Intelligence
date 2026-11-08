@@ -14,7 +14,9 @@ from solver.ephemeris import get_ephemeris_status
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-AUDIT_DIRECTORY = PROJECT_ROOT / "logs"
+from services.runtime_paths import LOG_DIRECTORY
+
+AUDIT_DIRECTORY = LOG_DIRECTORY
 ROUTE_AUDIT_LOG = AUDIT_DIRECTORY / "route_calculations.jsonl"
 OPTIMIZER_AUDIT_LOG = AUDIT_DIRECTORY / "mission_optimizer.jsonl"
 PLAYBACK_AUDIT_LOG = AUDIT_DIRECTORY / "mission_playback.jsonl"
@@ -70,7 +72,7 @@ def start_playback_audit(values: dict | None) -> dict:
     return {
         "playbackId": playback_id,
         "createdAtUtc": created_at,
-        "logFile": str(PLAYBACK_AUDIT_LOG.relative_to(PROJECT_ROOT)),
+        "logFile": str(Path("logs") / PLAYBACK_AUDIT_LOG.name),
     }
 
 
@@ -162,7 +164,7 @@ def write_route_audit(calculation: dict) -> dict:
     return {
         "runId": run_id,
         "createdAtUtc": record["createdAtUtc"],
-        "logFile": str(ROUTE_AUDIT_LOG.relative_to(PROJECT_ROOT)),
+        "logFile": str(Path("logs") / ROUTE_AUDIT_LOG.name),
         "documentation": str(METHOD_DOCUMENTATION.relative_to(PROJECT_ROOT)),
     }
 
@@ -186,7 +188,7 @@ def write_optimizer_audit(calculation: dict) -> dict:
     return {
         "runId": run_id,
         "createdAtUtc": record["createdAtUtc"],
-        "logFile": str(OPTIMIZER_AUDIT_LOG.relative_to(PROJECT_ROOT)),
+        "logFile": str(Path("logs") / OPTIMIZER_AUDIT_LOG.name),
         "documentation": str(METHOD_DOCUMENTATION.relative_to(PROJECT_ROOT)),
     }
 

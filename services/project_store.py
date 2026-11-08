@@ -11,7 +11,9 @@ from typing import Any
 from uuid import uuid4
 
 
-PROJECT_DATABASE = Path(__file__).resolve().parents[1] / "data" / "solar_simulator.db"
+from services.runtime_paths import DATA_DIRECTORY
+
+PROJECT_DATABASE = DATA_DIRECTORY / "solar_simulator.db"
 PROJECT_SCHEMA_VERSION = 1
 
 

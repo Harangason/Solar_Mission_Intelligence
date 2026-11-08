@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
 import { logActivity, setActivityProjectId } from './activityLog'
 import { ActivitySettingsDialog } from './components/ActivitySettingsDialog'
@@ -20,7 +20,14 @@ import type { MissionConfig, MissionResult, VisualConfig } from './types'
 const TwoDView = lazy(() => import('./components/TwoDView').then(({ TwoDView }) => ({ default: TwoDView })))
 const ThreeDView = lazy(() => import('./components/ThreeDView').then(({ ThreeDView }) => ({ default: ThreeDView })))
 
-type ViewMode = 'menu' | '2d' | '3d'
+type ViewMode = 'menu' | 'calculation' | '2d' | '3d'
+
+const WORKSPACES = [
+  { id: 'menu', number: '00', label: 'Übersicht', detail: 'Mission starten und fortsetzen' },
+  { id: 'calculation', number: '01', label: 'Berechnung', detail: 'Routen, Korridore und Solver' },
+  { id: '2d', number: '02', label: '2D-Ansicht', detail: 'Bahnen und Projektionen prüfen' },
+  { id: '3d', number: '03', label: '3D-Ansicht', detail: 'Flugbahnen räumlich erkunden' },
+] as const
 
 export function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('menu')
@@ -42,7 +49,38 @@ export function App() {
   const [projectStatus, setProjectStatus] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [solverRouteDialogOpen, setSolverRouteDialogOpen] = useState(false)
+  const [navigationOpen, setNavigationOpen] = useState(false)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try { return localStorage.getItem('solar-ui-theme') === 'dark' ? 'dark' : 'light' } catch { return 'light' }
+  })
+  const [savedContent, setSavedContent] = useState<string | null>(null)
+  const projectOperation = useRef(false)
+  const workspaceRef = useRef<HTMLElement>(null)
   const activeRouteSection = routeSections.find((section) => section.id === activeRouteSectionId) ?? routeSections[0]
+  const projectContent = useMemo(() => JSON.stringify({
+    routeSections, plannedMissionDate, plannedRoute, missionConfig, visualConfig, missionResult,
+  }), [routeSections, plannedMissionDate, plannedRoute, missionConfig, visualConfig, missionResult])
+  const hasUnsavedChanges = savedContent === null
+    ? Boolean(routeSections.length || plannedRoute || missionConfig || missionResult)
+    : projectContent !== savedContent
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    try { localStorage.setItem('solar-ui-theme', theme) } catch { /* Theme still works without storage. */ }
+  }, [theme])
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warnBeforeLeaving)
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving)
+  }, [hasUnsavedChanges])
+
+  const navigate = (mode: ViewMode) => {
+    setViewMode(mode)
+    setNavigationOpen(false)
+    workspaceRef.current?.focus()
+  }
 
   useEffect(() => {
     setActivityProjectId(projectId)
@@ -178,20 +216,27 @@ export function App() {
     missionResult,
   })
   const showProjectDialog = async (mode: 'save-as' | 'open') => {
+    if (projectOperation.current) return
     setProjectError(null)
+    setProjectDialogMode(mode)
     if (mode === 'open') {
+      projectOperation.current = true
+      setProjects([])
       setProjectBusy(true)
       try {
         setProjects(await listProjects())
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : String(error))
       } finally {
+        projectOperation.current = false
         setProjectBusy(false)
       }
     }
-    setProjectDialogMode(mode)
   }
   const saveProjectAs = async (name: string, description: string) => {
+    if (projectOperation.current) return
+    projectOperation.current = true
+    const contentAtSave = projectContent
     setProjectBusy(true)
     setProjectError(null)
     try {
@@ -206,6 +251,7 @@ export function App() {
       setProjectId(stored.id)
       setProjectName(stored.name)
       setProjectDescription(stored.description)
+      setSavedContent(contentAtSave)
       setProjectStatus(`${stored.name} · Revision ${stored.revision} gespeichert`)
       setProjectDialogMode(null)
     } catch (error) {
@@ -218,14 +264,18 @@ export function App() {
       })
       setProjectError(error instanceof Error ? error.message : String(error))
     } finally {
+      projectOperation.current = false
       setProjectBusy(false)
     }
   }
   const saveCurrentProject = async () => {
+    if (projectOperation.current) return
     if (!projectId) {
       await showProjectDialog('save-as')
       return
     }
+    projectOperation.current = true
+    const contentAtSave = projectContent
     setProjectBusy(true)
     setProjectError(null)
     try {
@@ -238,6 +288,7 @@ export function App() {
         details: { name: stored.name },
       })
       setProjectStatus(`${stored.name} · Revision ${stored.revision} gespeichert`)
+      setSavedContent(contentAtSave)
     } catch (error) {
       logActivity({
         category: 'project',
@@ -249,10 +300,13 @@ export function App() {
       setProjectStatus('')
       setProjectError(error instanceof Error ? error.message : String(error))
     } finally {
+      projectOperation.current = false
       setProjectBusy(false)
     }
   }
   const openStoredProject = async (selectedProjectId: string) => {
+    if (projectOperation.current) return
+    projectOperation.current = true
     setProjectBusy(true)
     setProjectError(null)
     try {
@@ -271,6 +325,14 @@ export function App() {
       setMissionConfig(stored.state.missionConfig ?? null)
       setVisualConfig(stored.state.visualConfig ?? null)
       setMissionResult(stored.state.missionResult ?? null)
+      setSavedContent(JSON.stringify({
+        routeSections: stored.state.routeSections,
+        plannedMissionDate: stored.state.plannedMissionDate,
+        plannedRoute: stored.state.plannedRoute,
+        missionConfig: stored.state.missionConfig ?? null,
+        visualConfig: stored.state.visualConfig ?? null,
+        missionResult: stored.state.missionResult ?? null,
+      }))
       setProjectLoadToken((current) => current + 1)
       setProjectId(stored.id)
       setProjectName(stored.name)
@@ -288,10 +350,13 @@ export function App() {
       })
       setProjectError(error instanceof Error ? error.message : String(error))
     } finally {
+      projectOperation.current = false
       setProjectBusy(false)
     }
   }
   const removeStoredProject = async (selectedProjectId: string) => {
+    if (projectOperation.current) return
+    projectOperation.current = true
     setProjectBusy(true)
     setProjectError(null)
     try {
@@ -306,6 +371,7 @@ export function App() {
         setProjectId('')
         setProjectName('')
         setProjectDescription('')
+        setSavedContent(null)
         setProjectStatus('Projekt gelöscht · aktueller Plan ist noch ungespeichert geöffnet')
       }
     } catch (error) {
@@ -318,41 +384,59 @@ export function App() {
       })
       setProjectError(error instanceof Error ? error.message : String(error))
     } finally {
+      projectOperation.current = false
       setProjectBusy(false)
     }
   }
 
   return (
-    <main className="app-shell">
+    <div className="app-shell">
+      <a className="skip-link" href="#workspace">Zum Arbeitsbereich</a>
+      <aside className="site-navigation" aria-label="Seitennavigation">
+        <div className="site-navigation-head">
+          <button className="brand" type="button" onClick={() => navigate('menu')}>
+            <span className="brand-mark" aria-hidden="true">SS</span>
+            <span>Solar System<small>Missionsplanung</small></span>
+          </button>
+          <button className="navigation-toggle" type="button" aria-expanded={navigationOpen} aria-controls="workspace-navigation" onClick={() => setNavigationOpen(!navigationOpen)}>
+            {navigationOpen ? 'Menü schließen' : 'Menü öffnen'}
+          </button>
+        </div>
+        <nav id="workspace-navigation" className={navigationOpen ? 'workspace-navigation is-open' : 'workspace-navigation'} aria-label="Arbeitsbereiche">
+          <h2>Arbeitsbereiche</h2>
+          {WORKSPACES.map((workspace) => (
+            <button key={workspace.id} type="button" className="nav-item" aria-current={viewMode === workspace.id ? 'page' : undefined} onClick={() => navigate(workspace.id)}>
+              <span className="nav-number">{workspace.number}</span>
+              <span><strong>{workspace.label}</strong><small>{workspace.detail}</small></span>
+            </button>
+          ))}
+          <button type="button" className="nav-item" aria-haspopup="dialog" onClick={() => { setNavigationOpen(false); setSettingsOpen(true) }}>
+            <span className="nav-number">04</span>
+            <span><strong>Einstellungen</strong><small>Aktivitäten und Protokolle</small></span>
+          </button>
+        </nav>
+        <div className="navigation-footer"><span>PLANEN · PRÜFEN · ERKUNDEN</span><p>Von der Idee zur Flugbahn.</p></div>
+      </aside>
+      <div className="site-content">
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => setViewMode('menu')}>
-          <span className="brand-mark" aria-hidden="true" />
-          Unser Sonnensystem
-        </button>
+        <div className="project-identity">
+          <strong>{projectName || 'Unbenannte Mission'}</strong>
+          <span>{hasUnsavedChanges ? 'Ungespeicherte Änderungen' : projectId ? 'Alle Änderungen gespeichert' : 'Noch nicht gespeichert'}</span>
+        </div>
         <div className="topbar-actions">
-          {viewMode !== 'menu' && (
-            <>
-            <div className="project-actions" aria-label="Projektverwaltung">
-              <span title={projectStatus || undefined}>{projectName || 'Ungespeichertes Projekt'}</span>
-              <button type="button" disabled={projectBusy} onClick={() => void saveCurrentProject()}>Speichern</button>
-              <button type="button" disabled={projectBusy} onClick={() => void showProjectDialog('save-as')}>Speichern unter …</button>
-              <button type="button" disabled={projectBusy} onClick={() => void showProjectDialog('open')}>Öffnen …</button>
-            </div>
-            <nav className="view-switcher" aria-label="Darstellung wechseln">
-              <button className={viewMode === '2d' ? 'active' : ''} type="button" onClick={() => setViewMode('2d')}>
-                2D
-              </button>
-              <button className={viewMode === '3d' ? 'active' : ''} type="button" onClick={() => setViewMode('3d')}>
-                3D
-              </button>
-            </nav>
-            </>
-          )}
-          <button className="settings-button" type="button" onClick={() => setSettingsOpen(true)}>
-            Settings
+          <button className="theme-toggle" type="button" aria-label={theme === 'light' ? 'Dunkles Design aktivieren' : 'Helles Design aktivieren'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+            <span aria-hidden="true">{theme === 'light' ? '◐' : '◑'}</span>
+          </button>
+          <button className="shell-button" type="button" disabled={projectBusy} onClick={() => void showProjectDialog('open')}>Öffnen …</button>
+          <button className="shell-button copy-project" type="button" disabled={projectBusy} onClick={() => void showProjectDialog('save-as')}>Kopie speichern …</button>
+          <button className="shell-button primary" type="button" disabled={projectBusy || Boolean(projectId && !hasUnsavedChanges)} onClick={() => void saveCurrentProject()}>
+            {projectBusy ? 'Bitte warten …' : 'Speichern'}
           </button>
         </div>
       </header>
+      <main id="workspace" ref={workspaceRef} tabIndex={-1} className="workspace">
+      {projectError && !projectDialogMode && <div className="project-feedback error" role="alert"><span>{projectError}</span><button className="shell-button" type="button" disabled={projectBusy} onClick={() => void saveCurrentProject()}>Erneut speichern</button></div>}
+      {projectStatus && !projectError && <p className="project-feedback" role="status">{projectStatus}{hasUnsavedChanges ? ' · Neue Änderungen noch nicht gespeichert' : ''}</p>}
 
       {settingsOpen && (
         <ActivitySettingsDialog
@@ -369,7 +453,9 @@ export function App() {
           projects={projects}
           busy={projectBusy}
           error={projectError}
-          onCancel={() => setProjectDialogMode(null)}
+          hasUnsavedChanges={hasUnsavedChanges}
+          onRetry={() => void showProjectDialog('open')}
+          onCancel={() => { if (!projectOperation.current) { setProjectDialogMode(null); setProjectError(null) } }}
           onSave={(name, description) => void saveProjectAs(name, description)}
           onOpen={(selectedProjectId) => void openStoredProject(selectedProjectId)}
           onDelete={(selectedProjectId) => void removeStoredProject(selectedProjectId)}
@@ -378,25 +464,31 @@ export function App() {
 
       {viewMode === 'menu' ? (
         <section className="chooser" aria-labelledby="chooser-title">
-          <p className="eyebrow">Interaktive Expedition</p>
-          <h1 id="chooser-title">Wie möchtest du das Sonnensystem erkunden?</h1>
-          <p className="intro">Wähle die wissenschaftliche 2D-Übersicht oder fliege frei durch das 3D-Modell.</p>
-          <div className="choice-grid">
-            <button className="choice-card choice-2d" type="button" onClick={() => setViewMode('2d')}>
-              <span className="choice-number">01</span>
-              <strong>Orbitalplaner 2D</strong>
-              <span>Zielkorridor zeichnen sowie reale Bahnverläufe von oben und entlang der Ekliptik prüfen.</span>
-            </button>
-            <button className="choice-card choice-3d" type="button" onClick={() => setViewMode('3d')}>
-              <span className="choice-number">02</span>
-              <strong>Interaktiv 3D</strong>
-              <span>Drehen, zoomen und Planeten auswählen – mit React Three Fiber.</span>
-            </button>
+          <p className="eyebrow">Raumfahrt · Orbitalmechanik · Simulation</p>
+          <h1 id="chooser-title">Deine nächste Mission.</h1>
+          <p className="intro">Plane eine Route durch das Sonnensystem. Prüfe die Flugbahn und erkunde deine Mission aus einer neuen Perspektive.</p>
+          <div className="overview-actions">
+            <button type="button" className="shell-button primary" onClick={() => navigate('calculation')}>{routeSections.length ? 'Planung fortsetzen' : 'Mission planen'}<span aria-hidden="true">↗</span></button>
+            <button type="button" className="shell-button" disabled={projectBusy} onClick={() => void showProjectDialog('open')}>Projekt öffnen …</button>
           </div>
+          <div className="overview-heading"><p className="eyebrow">Dein Arbeitsbereich</p><span>Ein Projekt. Alle Perspektiven.</span></div>
+          <div className="choice-grid">
+            {WORKSPACES.filter((workspace) => workspace.id !== 'menu').map((workspace) => (
+              <button className="choice-card" key={workspace.id} type="button" onClick={() => navigate(workspace.id)}>
+                <span className="choice-number">{workspace.number}</span>
+                <strong>{workspace.label}<span aria-hidden="true">↗</span></strong>
+                <span>{workspace.id === 'calculation' ? 'Definiere deine Route, bearbeite Zielkorridore und berechne mögliche Flugbahnen.' : workspace.id === '2d' ? 'Prüfe Bahnen und berechnete Missionsverläufe in Draufsicht und Seitenansicht.' : 'Entdecke Planeten, betrachte deine Route im Raum und spiele berechnete Missionen ab.'}</span>
+              </button>
+            ))}
+          </div>
+          <section className="mission-overview" aria-label="Aktueller Missionsstand">
+            <div><p className="eyebrow">Aktuelle Mission</p><h2>{projectName || 'Raum für deine Ideen.'}</h2><p>{routeSections.length ? 'Dein Routenplan ist in allen Ansichten verfügbar.' : 'Beginne im Berechnungsbereich mit deinem ersten Routenabschnitt.'}</p></div>
+            <dl><div><dt>Routenabschnitte</dt><dd>{String(routeSections.length).padStart(2, '0')}</dd></div><div><dt>Berechnung</dt><dd>{plannedRoute ? 'Vorhanden' : 'Noch offen'}</dd></div></dl>
+          </section>
         </section>
       ) : (
         <Suspense fallback={<div className="loading">Ansicht wird geladen …</div>}>
-          {viewMode === '2d'
+          {viewMode === 'calculation' || viewMode === '2d'
             ? (
               <TwoDView
                 projectId={projectId}
@@ -408,6 +500,7 @@ export function App() {
                 plannedRoute={plannedRoute}
                 onApplyPlannedSolution={applyPlannedSolution}
                 missionConfig={missionConfig}
+                displayOnly={viewMode === '2d'}
               />
             )
             : (
@@ -421,8 +514,8 @@ export function App() {
                 onPlannedMissionDateChange={setPlannedMissionDate}
                 plannedRoute={plannedRoute}
                 onPlannedRouteChange={setPlannedRoute}
-                onOpenRoutePlanner={() => setViewMode('2d')}
-                onOpenRouteSelector={() => setSolverRouteDialogOpen(true)}
+                onOpenRoutePlanner={() => setViewMode('calculation')}
+                onOpenRouteSelector={() => setViewMode('calculation')}
                 restoredMissionConfig={missionConfig}
                 restoredVisualConfig={visualConfig}
                 restoredMissionResult={missionResult}
@@ -430,6 +523,7 @@ export function App() {
                 onMissionConfigChange={setMissionConfig}
                 onVisualConfigChange={setVisualConfig}
                 onMissionResultChange={setMissionResult}
+                displayOnly
               />
             )}
         </Suspense>
@@ -451,6 +545,8 @@ export function App() {
           />
         </Suspense>
       )}
-    </main>
+      </main>
+      </div>
+    </div>
   )
 }

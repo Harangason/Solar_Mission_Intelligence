@@ -278,9 +278,12 @@ class MissionResult:
     events: list[MissionEvent]
     trajectory: list[TrajectoryPoint]
     summary: MissionSummary
+    departure_validation: dict | None = None
 
     def to_dict(self) -> dict:
         return {
+            "schemaVersion": "2.0",
+            "departureValidation": self.departure_validation,
             "config": self.config.to_dict(),
             "ephemeris": get_ephemeris_status(),
             "events": [event.to_dict() for event in self.events],
@@ -303,7 +306,8 @@ def _normalize(vector: Vector) -> Vector:
 
 
 def _mission_epoch_days(start_date: str) -> float:
-    timestamp = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+    from solver.orbital import utc
+    timestamp = utc(start_date)
     ephemeris_seconds = utc_to_ephemeris_seconds(timestamp)
     if ephemeris_seconds is not None:
         return ephemeris_seconds / DAY_SECONDS
@@ -756,67 +760,35 @@ def simulate_mission(config_or_values: MissionConfig | dict | None = None) -> Mi
             mass_kg=satellite.total_mass_kg,
         ))
 
-    earth_position, earth_velocity = _earth_state_at(config.start_date)
-    earth_distance = _magnitude(earth_position)
-    prograde = _normalize(earth_velocity)
-    parking_radius = EARTH_RADIUS_KM + config.parking_orbit_altitude_km
-    parking_speed = sqrt(MU_EARTH / parking_radius)
-    earth_circular_speed = sqrt(MU_SUN / earth_distance)
-    state: State = (earth_position, _add((0.0, 0.0, 0.0), prograde, earth_circular_speed + parking_speed))
-    log_event("SIMULATION_STARTED", MissionPhase.EARTH_PARKING_ORBIT, f"Start an der Erde; Parkbahn in {config.parking_orbit_altitude_km:g} km Höhe.", state)
-    log_event("EARTH_PARKING_ORBIT_REACHED", MissionPhase.EARTH_PARKING_ORBIT, f"LEO mit {parking_speed:.2f} km/s relativ zur Erde erreicht.", state)
-    log_event("LAUNCH_STAGE_SEPARATED", MissionPhase.STAGE_SEPARATION, "Startstufe getrennt; Transferfahrzeug übernimmt.", state)
-    log_event("SOLAR_OBERTH_CARRIER_ACTIVE", MissionPhase.STAGE_SEPARATION, f"Trägerbus, Kick-Stufe und Hitzeschild initialisiert; Gesamtmasse {satellite.total_mass_kg:.0f} kg.", state)
-    log_event("EARTH_SWING_LOOP_1", MissionPhase.EARTH_SWING_ORBIT, "Erste Geometrie- und Perigäumsschleife abgeschlossen.", state)
-    log_event("EARTH_SWING_LOOP_2", MissionPhase.EARTH_SWING_ORBIT, "Zweite Geometrieschleife; Sonnensturzrichtung eingestellt.", state)
-
-    perihelion_km = config.target_perihelion_au * AU_KM
-    semi_major_axis = (earth_distance + perihelion_km) / 2
-    transfer_speed = sqrt(MU_SUN * (2 / earth_distance - 1 / semi_major_axis))
-    state = (earth_position, _add((0.0, 0.0, 0.0), prograde, transfer_speed))
-    log_event("EARTH_ESCAPE_BURN", MissionPhase.EARTH_SWING_ORBIT, f"Retrograder Abflugimpuls; heliozentrisch {transfer_speed:.2f} km/s.", state)
-    kick_report = propulsion_system.module(PropulsionType.SOLID_KICK_STAGE)
-    if kick_report is not None and kick_report.enabled:
-        kick_report.active_seconds += config.burn_duration_seconds
-        kick_report.delivered_delta_v_km_s += max(0.0, earth_circular_speed - transfer_speed)
-    log_event("EARTH_SOI_EXIT", MissionPhase.SUNDIVER_TRANSFER, "Einflussbereich der Erde verlassen; heliozentrische RK4-Integration beginnt.", state)
-    log_event("SUNDIVER_TRAJECTORY_INITIALIZED", MissionPhase.SUNDIVER_TRANSFER, f"Zielperihel {config.target_perihelion_au:.3f} AE.", state)
-    if config.n_body_enabled:
-        log_event("N_BODY_MODEL_ACTIVE", MissionPhase.SUNDIVER_TRANSFER, "Zyklische Störrechnung für alle acht Planeten aktiv.", state)
-    if config.kalman_enabled:
-        log_event("KALMAN_NAVIGATION_ACTIVE", MissionPhase.SUNDIVER_TRANSFER, f"Positions-/Geschwindigkeitsfilter mit {config.navigation_cycle_hours:g}-Stunden-Zyklus aktiv.", state)
-    record(state, MissionPhase.SUNDIVER_TRANSFER)
-
-    last_radius = _magnitude(state[0])
-    for inbound_step in range(200_000):
-        radius_au = _magnitude(state[0]) / AU_KM
-        step = _adaptive_step_seconds(radius_au, False)
-        next_state = _rk4(
-            state,
-            step,
-            epoch_days_j2000=epoch_days_j2000,
-            elapsed_seconds=elapsed_seconds,
-            n_body_enabled=config.n_body_enabled,
-        )
-        elapsed_seconds += step
-        run_navigation_cycle(step)
-        next_radius = _magnitude(next_state[0])
-        phase = MissionPhase.SOLAR_APPROACH if radius_au < 0.2 else MissionPhase.SUNDIVER_TRANSFER
-        # Preserve enough propagated states for a smooth high-curvature
-        # Sundiver/Oberth rendering. These are real RK4 states, not a visual
-        # spline fitted after the calculation.
-        if inbound_step % 4 == 0:
-            record(next_state, phase)
-        if radius_au < 0.2 and not any(event.name == "SOLAR_APPROACH" for event in events):
-            log_event("SOLAR_APPROACH", MissionPhase.SOLAR_APPROACH, "Hitzeschild ausgerichtet; Zeitschritt reduziert.", next_state)
-        if next_radius > last_radius and last_radius / AU_KM < 0.2:
-            state = next_state
-            break
-        last_radius = next_radius
-        state = next_state
-    else:
-        raise RuntimeError("Der Perihelzustand wurde innerhalb des Integrationslimits nicht erreicht.")
-
+    # The mission and route views share the same physical departure. No
+    # synthetic Earth loops or state replacement at the solar transfer boundary.
+    from planner.trajectory_planner import PhysicalRoute, _normalized_input
+    prefix_values=_normalized_input({'start':{'type':'orbit','bodyId':'earth','startDate':config.start_date,'orbitAltitudeKm':config.parking_orbit_altitude_km},
+        'target':{'type':'body','bodyId':'sun'},'vehicle':{'wetMassKg':effective_mass_kg(),'propellantMassKg':satellite.kick_stage.mass_kg,'engineIspSeconds':config.engine_isp_seconds},'mission':{**config.to_dict(),'oberthDeltaVKmS':0},'simulation':{'includeAudit':False,'sampleTrajectoryPoints':180}})
+    prefix=PhysicalRoute(prefix_values,config.start_date)
+    prefix.solar_passage(prefix_values['target'])
+    prefix.target_reached=all(x['targetConditionSatisfied'] for x in prefix.sections)
+    evidence=prefix.to_result(prefix_values['target'],'solar-departure')
+    warnings.extend(evidence['warnings'])
+    for point in prefix.points:
+        phase=MissionPhase.EARTH_PARKING_ORBIT if point['phase']=='INITIAL_STATE' else MissionPhase.SOLAR_APPROACH if point['phase']=='SOLAR_APPROACH' else MissionPhase.SUNDIVER_TRANSFER
+        trajectory.append(TrajectoryPoint(elapsed_days=point['elapsedDays'],position_km=tuple(point['positionKm']),velocity_km_s=tuple(point['velocityKmS']),phase=phase,mass_kg=point.get('massKg',satellite.total_mass_kg)))
+    for burn in prefix.maneuvers:
+        from solver.orbital import utc
+        elapsed_seconds=(utc(burn['epochUtc'])-utc(config.start_date)).total_seconds()
+        log_event(burn['type'],MissionPhase.SUNDIVER_TRANSFER,f"Geplanter Impuls {burn['deltaVKmS']:.3f} km/s; Treibstoffnachweis {burn['vehicleFeasible']}",(tuple(burn['stateAfter']['positionKm']),tuple(burn['stateAfter']['velocityKmS'])))
+    elapsed_seconds=prefix.seconds
+    state=(tuple(prefix.r),tuple(prefix.v))
+    prefix_fuel_used=sum(m['propellantUsedKg'] or 0 for m in prefix.maneuvers if m['vehicleFeasible'])
+    if not evidence['summary']['feasible']:
+        log_event('MISSION_ABORT',MissionPhase.MISSION_ABORT,'Abflug nicht mit Fahrzeug, Geometrie oder Ephemeriden nachgewiesen; Trajektorie nur Entwurf.',state,'warning')
+        summary=MissionSummary(status='ABORT',total_flight_days=elapsed_seconds/DAY_SECONDS,perihelion_au=_magnitude(state[0])/AU_KM,
+            max_solar_flux_w_m2=SOLAR_CONSTANT_W_M2/(_magnitude(state[0])/AU_KM)**2,pre_burn_speed_km_s=_magnitude(state[1]),post_burn_speed_km_s=_magnitude(state[1]),achieved_burn_delta_v_km_s=0,
+            propellant_used_kg=prefix_fuel_used,payload_mass_kg=config.payload_mass_kg,distance_au_by_year={},speed_km_s_by_year={},electric_sail_gain_km_s=0,navigation_cycles=0,position_uncertainty_km=0,velocity_uncertainty_km_s=0,
+            max_planetary_perturbation_mm_s2=0,propulsion_report=propulsion_system.reports(),time_to_saturn_days=None,time_to_voyager_distance_days=None,warnings=list(dict.fromkeys(warnings)))
+        return MissionResult(config=config,events=events,trajectory=trajectory,summary=summary,departure_validation=evidence['validation'])
+    satellite.kick_stage.propellant_mass_kg=prefix.propellant
+    log_event('EARTH_SOI_EXIT',MissionPhase.SUNDIVER_TRANSFER,'Physikalischer Abflug und Solartransfer propagiert; alle Abflugimpulse budgetiert.',state)
     actual_perihelion_au = _magnitude(state[0]) / AU_KM
     max_solar_flux = SOLAR_CONSTANT_W_M2 / actual_perihelion_au**2
     thermally_safe = satellite.heatshield.register_flux(max_solar_flux)
@@ -1005,7 +977,7 @@ def simulate_mission(config_or_values: MissionConfig | dict | None = None) -> Mi
         pre_burn_speed_km_s=pre_burn_speed,
         post_burn_speed_km_s=post_burn_speed,
         achieved_burn_delta_v_km_s=achieved_delta_v,
-        propellant_used_kg=propellant_used,
+        propellant_used_kg=prefix_fuel_used + propellant_used,
         payload_mass_kg=config.payload_mass_kg,
         distance_au_by_year=distance_by_year,
         speed_km_s_by_year=speed_by_year,
@@ -1019,7 +991,7 @@ def simulate_mission(config_or_values: MissionConfig | dict | None = None) -> Mi
         time_to_voyager_distance_days=time_to_voyager_distance_days,
         warnings=warnings,
     )
-    return MissionResult(config=config, events=events, trajectory=trajectory, summary=summary)
+    return MissionResult(config=config, events=events, trajectory=trajectory, summary=summary, departure_validation=evidence['validation'])
 
 
 def get_default_mission_config() -> dict:

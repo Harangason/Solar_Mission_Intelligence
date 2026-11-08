@@ -44,6 +44,7 @@ from solver.trajectory import (
     simulate_mission,
 )
 from visualization.view_3d_celestials import PLANET_DATA
+from solver.ephemeris import body_gm, planet_state, EPHEMERIS, SPICE_TARGETS
 
 
 SUN_RADIUS_KM = 696_340.0
@@ -53,6 +54,13 @@ MOON_CATALOG = Path(__file__).resolve().parents[1] / "web" / "public" / "moons.j
 # Physical radii are deliberately separate from the orbital-elements catalog.
 # Unknown small moons remain routable as point targets with a conservative
 # 10 km keep-out radius instead of being rejected by an ID allow-list.
+KNOWN_MOON_GM_KM3_S2 = {
+    "earth-moon": 4902.800118, "mars-phobos": .0007087, "mars-deimos": .0000962,
+    "jupiter-io": 5959.916, "jupiter-europa": 3202.739, "jupiter-ganymede": 9887.834,
+    "jupiter-callisto": 7179.289, "saturn-titan": 8978.1382,
+    "saturn-enceladus": 7.21037, "uranus-titania": 226.9,
+    "uranus-oberon": 205.3, "neptune-triton": 1427.598,
+}
 KNOWN_MOON_RADII_KM = {
     "earth-moon": 1_737.4,
     "mars-phobos": 11.267,
@@ -149,7 +157,7 @@ def _catalog() -> dict[str, RouteBody]:
             name=row[1],
             kind="planet",
             radius_km=row[3] / 1_000,
-            mass_kg=row[2],
+            mass_kg=(body_gm(row[0]) or row[2]*G_KM3_KG_S2)/G_KM3_KG_S2,
             parent_id="sun",
         )
     try:
@@ -159,12 +167,13 @@ def _catalog() -> dict[str, RouteBody]:
     for row in moon_rows:
         if not row.get("semiMajorAxisKm") or not row.get("orbitalPeriodDays"):
             continue
+        SPICE_TARGETS.setdefault(row["id"],(row["name"].upper(),))
         result[row["id"]] = RouteBody(
             id=row["id"],
             name=row["name"],
             kind="moon",
             radius_km=KNOWN_MOON_RADII_KM.get(row["id"], 10.0),
-            mass_kg=0.0,
+            mass_kg=(body_gm(row["id"]) or KNOWN_MOON_GM_KM3_S2.get(row["id"], 0.0)) / G_KM3_KG_S2,
             parent_id=row["parentId"],
             moon_elements=row,
         )
@@ -190,7 +199,8 @@ def _epoch_days(epoch: str | None) -> float:
             tzinfo=timezone.utc
         )
     else:
-        parsed = datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+        from solver.orbital import utc
+        parsed = utc(value)
     return (parsed - J2000).total_seconds() / DAY_SECONDS
 
 
@@ -243,6 +253,15 @@ def _body_state(
     if body.kind == "planet":
         ephemeris, _ = _planet_records(body.id)
         return _planet_state_at(ephemeris, absolute_days)
+    if body.id in SPICE_TARGETS and EPHEMERIS.ensure_loaded():
+        try:
+            resolved = planet_state(body.id, absolute_days * DAY_SECONDS)
+            if resolved is not None:
+                raw, _ = resolved
+                return tuple(raw[:3]), tuple(raw[3:])
+        except RuntimeError:
+            if EPHEMERIS.strict:
+                raise
     parent = catalog[body.parent_id]
     parent_position, parent_velocity = _body_state(parent, absolute_days, catalog)
     relative_position, relative_velocity = _moon_relative_state(body, absolute_days)
@@ -284,7 +303,7 @@ def _entry_radius(body: RouteBody, catalog: dict[str, RouteBody]) -> float:
     semi_major = float((body.moon_elements or {})["semiMajorAxisKm"])
     # A moon without a catalogued mass still receives a finite navigation
     # boundary.  This is not presented as a physical SOI.
-    return max(_parking_radius(body), min(semi_major * 0.02, body.radius_km * 20))
+    return max(_parking_radius(body), semi_major * (body.mass_kg / parent.mass_kg) ** .4) if body.mass_kg > 0 else max(_parking_radius(body), min(semi_major * .02, body.radius_km * 20))
 
 
 def _transfer_seconds(
@@ -1076,7 +1095,7 @@ def _local_passage(
     }
 
 
-def simulate_generic_route_sections(values: dict | None) -> dict:
+def _legacy_schematic_route_sections(values: dict | None) -> dict:
     values = values or {}
     raw_sections = values.get("routeSections")
     geometry_only = str(values.get("calculationStage") or "") == "geometry"
@@ -1798,3 +1817,9 @@ def simulate_generic_route_sections(values: dict | None) -> dict:
             "totalTransitionDeltaVKmS": total_delta_v,
         },
     }
+
+
+def simulate_generic_route_sections(values: dict | None) -> dict:
+    """Single audited planner; legacy section output is an adapter only."""
+    from planner.trajectory_planner import calculate_section_route
+    return calculate_section_route(values or {})

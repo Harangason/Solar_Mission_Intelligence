@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
@@ -12,7 +11,7 @@ from services.activity_log import read_activities
 
 from .audit_log import write_ai_audit
 from .evaluation import train_and_evaluate
-from .interaction_agent import DEFAULT_MODEL, _call_responses_api, _extract_output_text
+from .interaction_agent import configured_model, _call_responses_api, _extract_output_text
 from .schemas import SCHEMA_VERSION, validate_ai_payload
 
 
@@ -272,7 +271,7 @@ def generate_calculation_suggestion(
         recent_solver_history = recent_solver_history[:MAX_HISTORY_ITEMS]
     ml_prioritization = train_and_evaluate()
 
-    model = os.getenv("OPENAI_CALCULATION_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    model = configured_model("calculation")
     context = {
         "missionState": mission_state,
         "solverResult": solver_result,

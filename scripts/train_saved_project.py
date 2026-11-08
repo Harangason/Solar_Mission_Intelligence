@@ -9,8 +9,10 @@ from the deterministic route solver, never from the ranker.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import math
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
@@ -28,6 +30,46 @@ from solver.trajectory import get_default_mission_config
 
 
 BATCH_DIRECTORY = PROJECT_ROOT / "data" / "ml_training_batches"
+
+
+def _available_memory_gb() -> float | None:
+    if os.name != "nt":
+        return None
+
+    class MemoryStatusEx(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = MemoryStatusEx()
+    status.dwLength = ctypes.sizeof(status)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return None
+    return status.ullAvailPhys / (1024 ** 3)
+
+
+def resolve_worker_count(
+    requested_workers: int,
+    job_count: int,
+    *,
+    memory_gb_per_worker: float = 0.75,
+) -> int:
+    cpu_workers = os.cpu_count() or 1
+    requested = cpu_workers if requested_workers <= 0 else requested_workers
+    memory_gb = _available_memory_gb()
+    if memory_gb is None:
+        memory_workers = requested
+    else:
+        memory_workers = max(1, int(memory_gb / max(0.1, memory_gb_per_worker)))
+    return max(1, min(requested, cpu_workers, memory_workers, max(1, job_count)))
 
 
 def _parse_date(value: str) -> date:
@@ -188,7 +230,9 @@ def run_training_batch(
     )
     arguments = [(item, route_sections, mission) for item in dates]
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=max(1, min(workers, 8))) as executor:
+    worker_count = resolve_worker_count(workers, len(arguments))
+    print(f"Training nutzt {worker_count} Worker", flush=True)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
         for index, calculated in enumerate(executor.map(_calculate, arguments), start=1):
             results.append(calculated)
             write_activity(
@@ -241,7 +285,7 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--search-start", required=True)
     parser.add_argument("--search-end", required=True)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--workers", type=int, default=0, help="0 = automatisch alle CPU-Kerne, RAM-schonend begrenzt")
     parser.add_argument("--allow-historical", action="store_true")
     args = parser.parse_args()
     summary = run_training_batch(

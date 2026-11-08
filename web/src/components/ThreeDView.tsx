@@ -1,3 +1,5 @@
+import { trajectoryToWaypointRoute } from '../trajectoryToWaypointRoute'
+import { useRouteEphemerides } from '../bodyEphemerides'
 import { GizmoHelper, GizmoViewport, Grid, PerformanceMonitor, Stars } from '@react-three/drei'
 import { Canvas, type RootState } from '@react-three/fiber'
 import {
@@ -101,11 +103,11 @@ function pointAtDay(result: MissionResult, elapsedDays: number) {
 }
 
 function calendarDateAfterDays(startDate: string, elapsedDays: number) {
-  return new Date(new Date(`${startDate}T00:00:00Z`).getTime() + elapsedDays * 86_400_000).toISOString().slice(0, 10)
+  return new Date(new Date(startDate.includes('T') ? startDate : `${startDate}T00:00:00Z`).getTime() + elapsedDays * 86_400_000).toISOString().slice(0, 10)
 }
 
 function formatMissionDate(isoDate: string) {
-  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })
+  return new Date(isoDate.includes('T') ? isoDate : `${isoDate}T00:00:00Z`).toLocaleDateString('de-DE', { timeZone: 'UTC' })
 }
 
 interface ThreeDViewProps {
@@ -127,6 +129,7 @@ interface ThreeDViewProps {
   onMissionConfigChange: Dispatch<SetStateAction<MissionConfig | null>>
   onVisualConfigChange: Dispatch<SetStateAction<VisualConfig | null>>
   onMissionResultChange: Dispatch<SetStateAction<MissionResult | null>>
+  displayOnly?: boolean
 }
 
 function routeStateAtDay(route: WaypointRouteResult, elapsedDays: number): PlaybackStateSnapshot {
@@ -175,6 +178,7 @@ export function ThreeDView({
   onMissionConfigChange,
   onVisualConfigChange,
   onMissionResultChange,
+  displayOnly = false,
 }: ThreeDViewProps) {
   const [data, setData] = useState<SolarSystemData | null>(null)
   const [moonCatalogue, setMoonCatalogue] = useState<MoonCatalogue | null>(null)
@@ -404,65 +408,7 @@ export function ThreeDView({
   const visibleMissionResult = missionResultVisible && routePlanStatus === 'hidden' ? result : null
 
   const applyGenericTrajectoryPlan = useCallback((trajectoryPlan: GenericTrajectoryPlannerResult) => {
-    const legacy = trajectoryPlan.legacyRoute
-    if (legacy && typeof legacy === 'object' && 'trajectory' in legacy && 'summary' in legacy) {
-      setPlannedRoute(legacy as WaypointRouteResult)
-    } else {
-      const trajectory = trajectoryPlan.trajectory
-      const finalPoint = trajectory.at(-1)
-      const targetPosition = trajectoryPlan.target.positionKm ?? finalPoint?.positionKm ?? [0, 0, 0]
-      const finalVelocity = finalPoint?.velocityKmS ?? [0, 0, 0]
-      const finalSpeed = Math.hypot(...finalVelocity)
-      const outgoingDirection = finalSpeed > 0
-        ? finalVelocity.map((component) => component / finalSpeed) as [number, number, number]
-        : [1, 0, 0] as [number, number, number]
-      const minimumSolarRadiusKm = Math.min(...trajectory.map((point) => Math.hypot(...point.positionKm)))
-      setPlannedRoute({
-        startDate: trajectoryPlan.start.date,
-        genericTarget: trajectoryPlan.target,
-        totalFlightDays: trajectoryPlan.summary.totalFlightDays,
-        warnings: trajectoryPlan.warnings,
-        trajectory,
-        segments: trajectoryPlan.segments,
-        waypoint: {
-          id: trajectoryPlan.target.bodyId ?? trajectoryPlan.target.zoneId ?? trajectoryPlan.target.boundaryId ?? trajectoryPlan.target.type,
-          name: trajectoryPlan.target.bodyId ?? trajectoryPlan.target.zoneId ?? trajectoryPlan.target.boundaryId ?? trajectoryPlan.target.type,
-          encounterDay: trajectoryPlan.summary.totalFlightDays,
-          flybyAltitudeKm: 0,
-          trajectoryIndex: Math.max(0, trajectory.length - 1),
-          positionKm: targetPosition,
-        },
-        outgoingDirection,
-        validation: {
-          collisionFree: minimumSolarRadiusKm >= 696_340,
-          minimumSolarRadiusKm,
-          sunRadiusKm: 696_340,
-          minimumSolarAltitudeKm: minimumSolarRadiusKm - 696_340,
-        },
-        summary: {
-          flybyMode: 'multi-section',
-          requiredInjectionDeltaVKmS: trajectoryPlan.summary.requiredInjectionDeltaVKmS ?? trajectoryPlan.summary.totalDeltaVKmS ?? 0,
-          availableInjectionDeltaVKmS: draft.oberthDeltaVKmS,
-          solarDepartureInjectionApplied: trajectoryPlan.summary.feasible,
-          incomingExcessSpeedKmS: trajectoryPlan.summary.departureVInfinityKmS ?? 0,
-          turnAngleDeg: 0,
-          heliocentricSpeedBeforeKmS: Math.hypot(...trajectoryPlan.start.velocityKmS),
-          heliocentricSpeedAfterKmS: trajectoryPlan.summary.finalHeliocentricSpeedKmS ?? finalSpeed,
-          speedGainKmS: (trajectoryPlan.summary.finalHeliocentricSpeedKmS ?? finalSpeed) - Math.hypot(...trajectoryPlan.start.velocityKmS),
-          targetCorrectionDeltaVKmS: trajectoryPlan.summary.arrivalVInfinityKmS ?? 0,
-          targetInjectionApplied: trajectoryPlan.summary.targetReached,
-          passiveTargeting: trajectoryPlan.summary.targetReached,
-          courseChangeDeg: trajectoryPlan.summary.targetAlignmentDeg ?? 0,
-          periapsisSpeedKmS: trajectoryPlan.summary.finalHeliocentricSpeedKmS ?? finalSpeed,
-          observationWindowHours: 0,
-          targetAlignmentDeg: trajectoryPlan.summary.targetAlignmentDeg ?? 0,
-          feasibleWithConfiguredBurn: trajectoryPlan.summary.feasible,
-          warnings: trajectoryPlan.warnings,
-          model: trajectoryPlan.summary.model,
-        },
-        audit: trajectoryPlan.audit as WaypointRouteResult['audit'],
-      })
-    }
+    setPlannedRoute(trajectoryToWaypointRoute(trajectoryPlan))
     setPlannedMissionDate(trajectoryPlan.start.date)
     setRouteValidationPending(false)
     setRoutePlanStatus('confirmed')
@@ -584,7 +530,7 @@ export function ThreeDView({
       eventType,
       missionDay: day,
       simulatedDateTimeUtc: new Date(
-        new Date(`${activeStartDate}T00:00:00Z`).getTime() + day * 86_400_000,
+        new Date(activeStartDate.includes('T') ? activeStartDate : `${activeStartDate}T00:00:00Z`).getTime() + day * 86_400_000,
       ).toISOString(),
       sectionId: section?.id,
       sectionLabel: section?.label,
@@ -730,6 +676,7 @@ export function ThreeDView({
     if (!finalTargetId || !INTERSTELLAR_TARGETS.some((target) => target.id === finalTargetId)) return
     setSelectedTargetId(finalTargetId)
   }, [routeSections, selectedTargetId])
+  useRouteEphemerides(plannedRoute?.bodyEphemerides)
   const timestampMs = new Date(activeStartDate).getTime() + elapsedDays * 86_400_000
   const focusedPlanet = cameraFocusRequest.kind === 'planet'
     ? data?.planets.find((planet) => planet.id === cameraFocusRequest.planetId) ?? null
@@ -741,7 +688,7 @@ export function ThreeDView({
         ? planetPositionAt(focusedPlanet, timestampMs, visual.orbitScale, visual.inclinationScale)
         : null
     },
-    [cameraFocusRequest, focusedPlanet, timestampMs, visual.inclinationScale, visual.orbitScale],
+    [cameraFocusRequest, focusedPlanet, timestampMs, visual.inclinationScale, visual.orbitScale, plannedRoute],
   )
   const focusedPlanetRadius = cameraFocusRequest.kind === 'point'
     ? cameraFocusRequest.radius
@@ -766,7 +713,7 @@ export function ThreeDView({
     if (!earth || !waypointPlanet) return null
     const activeStartDate = optimizationResult?.alternatives.gravityAssist.startDate ?? draft.startDate
     const activeEncounterDay = optimizationResult?.optimizedEncounterDay ?? encounterDay
-    const startTimestamp = new Date(`${activeStartDate}T00:00:00Z`).getTime()
+    const startTimestamp = new Date(activeStartDate.includes('T') ? activeStartDate : `${activeStartDate}T00:00:00Z`).getTime()
     return {
       earth: planetPositionAt(earth, startTimestamp, visual.orbitScale, visual.inclinationScale),
       sun: new THREE.Vector3(0, 0, 0),
@@ -788,7 +735,7 @@ export function ThreeDView({
     if (!earth || !waypointPlanet) return undefined
     const requestedStartDate = optimizationResult.requestedPlan.startDate
     const requestedEncounterDay = optimizationResult.requestedPlan.encounterDay
-    const requestedTimestamp = new Date(`${requestedStartDate}T00:00:00Z`).getTime()
+    const requestedTimestamp = new Date(requestedStartDate.includes('T') ? requestedStartDate : `${requestedStartDate}T00:00:00Z`).getTime()
     return {
       earth: planetPositionAt(earth, requestedTimestamp, visual.orbitScale, visual.inclinationScale),
       waypoint: planetPositionAt(waypointPlanet, requestedTimestamp + requestedEncounterDay * 86_400_000, visual.orbitScale, visual.inclinationScale),
@@ -1308,10 +1255,10 @@ export function ThreeDView({
 
   return (
     <section
-      className={`three-d-layout mission-layout ${missionPlannerOpen ? 'planner-open' : 'planner-collapsed'} ${parameterPanelOpen ? 'parameters-open' : 'parameters-collapsed'} ${routePlanStatus === 'review' ? 'drawing-active' : ''}`}
+      className={`three-d-layout mission-layout ${!displayOnly && missionPlannerOpen ? 'planner-open' : 'planner-collapsed'} ${parameterPanelOpen ? 'parameters-open' : 'parameters-collapsed'} ${routePlanStatus === 'review' ? 'drawing-active' : ''}`}
       aria-label="Interaktives Planeten- und Missionsmodell"
     >
-      <button
+      {!displayOnly && <button
         className="sidebar-toggle sidebar-toggle-left"
         type="button"
         aria-label={missionPlannerOpen ? 'Missionsplanung einklappen' : 'Missionsplanung ausklappen'}
@@ -1320,7 +1267,7 @@ export function ThreeDView({
         onClick={() => setMissionPlannerOpen((open) => !open)}
       >
         <span aria-hidden="true">{missionPlannerOpen ? '‹' : '›'}</span>
-      </button>
+      </button>}
       <button
         className="sidebar-toggle sidebar-toggle-right"
         type="button"
@@ -1497,7 +1444,7 @@ export function ThreeDView({
               </optgroup>
             </select>
           </label>
-          {routeSections.length === 0
+          {!displayOnly && (routeSections.length === 0
             ? (
               <button className="quick-route-calculate" type="button" onClick={onOpenRoutePlanner}>
                 Route anlegen
@@ -1512,8 +1459,8 @@ export function ThreeDView({
             >
               {routeLoading ? 'Validiert …' : !plannedRoute ? 'Solver-Route auswählen' : routeValidationPending ? 'Route mit Satellit validieren' : 'Satellit neu validieren'}
             </button>
-            )}
-          <button
+            ))}
+          {!displayOnly && <button
             className={routePlanStatus === 'review' ? 'active' : ''}
             type="button"
             disabled={!selectedTarget || routeLoading || !routePlanNodes}
@@ -1521,8 +1468,8 @@ export function ThreeDView({
             onClick={activateRouteDrawing}
           >
             {routePlanStatus === 'review' ? 'Zeichnen · aktiv' : routeSketch ? 'Entwurf bearbeiten' : 'Route zeichnen'}
-          </button>
-          {routePlanStatus === 'review' && routeSketch && <>
+          </button>}
+          {!displayOnly && routePlanStatus === 'review' && routeSketch && <>
             <label className="quick-draw-select">
               <span>Werkzeug</span>
               <select
@@ -1581,7 +1528,7 @@ export function ThreeDView({
             {routeCalculationBlockReason}
           </div>
         )}
-        <DraggableOverlayPanel
+        {!displayOnly && <DraggableOverlayPanel
           className="target-controls"
           ariaLabel="Missionsplanung und Solver-Navigation"
           draggable={false}
@@ -1910,7 +1857,7 @@ export function ThreeDView({
           )}
           {plannedRoute && (
             <span className={plannedRoute.summary.feasibleWithConfiguredBurn && !routeValidationPending ? 'route-ok' : 'route-warning'}>
-              {routeValidationPending ? 'Solver-Route erhalten · Satellitenkonfiguration muss neu validiert werden' : plannedRoute.summary.feasibleWithConfiguredBurn ? 'Erreichbar' : 'Nicht erreichbar'} · Kurs-Δv {plannedRoute.summary.requiredInjectionDeltaVKmS.toFixed(2)} km/s · Swing-by {plannedRoute.summary.courseChangeDeg?.toFixed(1) ?? '–'}° · Geschwindigkeitsgewinn {plannedRoute.summary.speedGainKmS >= 0 ? '+' : ''}{plannedRoute.summary.speedGainKmS.toFixed(2)} km/s
+              {routeValidationPending ? 'Solver-Route erhalten · Satellitenkonfiguration muss neu validiert werden' : plannedRoute.genericTrajectoryPlan?.summary.status === 'model_valid' ? 'Modellgültig · Fahrzeugnachweis fehlt' : plannedRoute.summary.feasibleWithConfiguredBurn ? 'Erreichbar' : 'Nicht erreichbar'} · Kurs-Δv {plannedRoute.summary.requiredInjectionDeltaVKmS.toFixed(2)} km/s · Swing-by {plannedRoute.summary.courseChangeDeg?.toFixed(1) ?? '–'}° · Geschwindigkeitsgewinn {plannedRoute.summary.speedGainKmS >= 0 ? '+' : ''}{plannedRoute.summary.speedGainKmS.toFixed(2)} km/s
             </span>
           )}
           {plannedRoute?.spacecraftIntegration && !routeValidationPending && (
@@ -1939,7 +1886,7 @@ export function ThreeDView({
             </div>
           </details>
           </div>
-        </DraggableOverlayPanel>
+        </DraggableOverlayPanel>}
         {(plannedRoute || visibleMissionResult) && <div className="phase-legend" aria-label="Farblegende">
           <span className="inbound">Sonnensturz</span><span className="burn">Oberth</span><span className="sail">Electric Sail</span><span className="cruise">Deep Space</span>
         </div>}
@@ -2049,9 +1996,10 @@ export function ThreeDView({
         onVisualChange={setVisual}
         onDraftChange={(nextDraft) => { setDraft(nextDraft); abortActivePlayback('spacecraft-configuration-changed'); setRouteValidationPending(Boolean(plannedRoute)); setOptimizationPreflight(null); setDirectSolarRoute(null); setOptimizationResult(null); setRouteError(null) }}
         onApplyTrajectoryPlan={applyGenericTrajectoryPlan}
+        showTrajectoryPlanner={!displayOnly}
       />
       {visual.showScaleNotice && (
-        <p className="floating-scale-note">Orbitale Darstellung: {visual.orbitScale} × √AE · Neigungen vertikal ×{visual.inclinationScale} · Körperradien proportional zueinander · Missionsbahn RK4 / N-Körper</p>
+        <p className="floating-scale-note">Orbitale Darstellung: {visual.orbitScale} × √AE · Neigungen vertikal ×{visual.inclinationScale} · Körperradien proportional zueinander · Missionsbahn {plannedRoute?.genericTrajectoryPlan ? plannedRoute.genericTrajectoryPlan.summary.model : 'RK4 / N-Körper'}</p>
       )}
     </section>
   )

@@ -33,3 +33,27 @@ Die API-Endpunkte liegen in `main.py` unter `/api/ai/*`. Die Phasentests
 `tests/test_ai_audio.py` sichern die Vertraege ab.
 
 Die separate Datei `AI_INTEGRATION_INSTRUCTIONS.md` bleibt unveraendert.
+
+## Lokaler Textchat
+
+Die drei Textrollen verwenden dieselbe Modellanbindung und behalten ihre
+Schemas, Aktionen, Solverbezüge und Audits. Fuer Ollama wird lokal in der
+ignorierten `.env.local` konfiguriert:
+
+```dotenv
+SOLAR_SYSTEM_AI_PROVIDER=ollama
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen3.8:27b
+```
+
+Nur installierte Modelle mit Textvervollstaendigung an einer Loopback-Adresse
+sind zugelassen; Cloud-Modelle werden abgewiesen. Es gibt keinen automatischen
+Providerwechsel oder Modelldownload. `GET /api/ai/status` prueft das Modell ohne
+Generierung. Die Oberflaeche zeigt Anbieter, Modell und Verfuegbarkeit, bewahrt
+fehlgeschlagene Nachrichten fuer einen erneuten Versuch und bietet Abbrechen.
+
+Antworten kommen als JSON nach dem bestehenden Schema ueber
+[Ollamas strukturierte Ausgabe](https://docs.ollama.com/capabilities/structured-outputs).
+Der lokale Vorlesemodus nutzt vorhandene lokale Browserstimmen. Qwen ist kein
+Transkriptionsmodell; die Spracheingabe bleibt ohne separat eingerichtete
+Audioanbindung deaktiviert. Der Textchat benoetigt keinen OpenAI-Schluessel.

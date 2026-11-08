@@ -4,7 +4,8 @@ __pycache__/
 *.tsbuildinfo
 data/*.db
 data/*.db-*
-logs/*.jsonl
+logs/
+startup.*.log
 server.log
 server-error.log
 server-ai.log

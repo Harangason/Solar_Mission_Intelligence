@@ -107,7 +107,7 @@ export function ActivitySettingsDialog({ projectId, onClose }: ActivitySettingsD
     >
       <header>
         <div>
-          <small>Settings</small>
+          <small>Einstellungen</small>
           <h2 id="activity-settings-title">Aktivitätsprotokoll</h2>
         </div>
         <button type="button" aria-label="Settings schließen" onClick={onClose}>×</button>

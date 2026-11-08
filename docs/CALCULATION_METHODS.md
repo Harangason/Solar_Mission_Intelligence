@@ -1,5 +1,6 @@
 # Nachweisführung der Planeten- und Missionsbahnberechnung
 
+> Aktueller Rechenstand ab 2026-10-02: [Bahnberechnung, Architektur, Nachweise und Modellgrenzen](TRAJECTORY_REPAIR_20261002.md). Die nachfolgenden Beschreibungen der früheren Linien-/Spezialpfade dokumentieren den historischen Stand und gelten nicht als heutiger physikalischer Nachweis.
 Zurueck zum [Dokumentationsindex](README.md). Die Implementierungsuebersicht
 steht in [Planner](README_PLANNER.md), [Solver](README_SOLVER.md) und
 [Services](README_SERVICES.md).
