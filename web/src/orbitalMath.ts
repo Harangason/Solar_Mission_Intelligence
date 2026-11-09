@@ -39,8 +39,8 @@ function normalizeDegrees(value: number) {
 }
 
 function solveEccentricAnomaly(meanAnomaly: number, eccentricity: number) {
-  let eccentricAnomaly = meanAnomaly
-  for (let iteration = 0; iteration < 8; iteration += 1) {
+  let eccentricAnomaly = eccentricity > 0.8 ? (meanAnomaly < 0 ? -Math.PI : Math.PI) : meanAnomaly
+  for (let iteration = 0; iteration < 30; iteration += 1) {
     eccentricAnomaly -= (
       eccentricAnomaly - eccentricity * Math.sin(eccentricAnomaly) - meanAnomaly
     ) / (1 - eccentricity * Math.cos(eccentricAnomaly))
@@ -50,11 +50,14 @@ function solveEccentricAnomaly(meanAnomaly: number, eccentricity: number) {
 
 function orbitalPlaneToEcliptic(planet: PlanetData, xPrime: number, yPrime: number) {
   const elements = orbitalElements(planet)
-  const inclination = degreesToRadians(elements.inclinationDeg)
-  const ascendingNode = degreesToRadians(elements.ascendingNodeLongitudeDeg)
-  const argumentOfPerihelion = degreesToRadians(
-    elements.perihelionLongitudeDeg - elements.ascendingNodeLongitudeDeg,
-  )
+  return rotateOrbitalPlane(elements.inclinationDeg, elements.ascendingNodeLongitudeDeg,
+    elements.perihelionLongitudeDeg - elements.ascendingNodeLongitudeDeg, xPrime, yPrime)
+}
+
+function rotateOrbitalPlane(inclinationDeg: number, ascendingNodeDeg: number, argumentDeg: number, xPrime: number, yPrime: number) {
+  const inclination = degreesToRadians(inclinationDeg)
+  const ascendingNode = degreesToRadians(ascendingNodeDeg)
+  const argumentOfPerihelion = degreesToRadians(argumentDeg)
   const cosArgument = Math.cos(argumentOfPerihelion)
   const sinArgument = Math.sin(argumentOfPerihelion)
   const cosNode = Math.cos(ascendingNode)
@@ -123,3 +126,25 @@ export function createOrbitPoints(
 
 export const ANIMATION_DAYS_PER_SECOND = 30
 export { DAY_MS }
+
+export interface EllipticOrbit {
+  epochJd: number; semiMajorAxisAu: number; eccentricity: number; inclinationDeg: number
+  ascendingNodeDeg: number; argumentPerihelionDeg: number; meanAnomalyDeg: number; periodDays: number
+}
+
+function ellipticPoint(orbit: EllipticOrbit, eccentricAnomaly: number, scale: number) {
+  const x = orbit.semiMajorAxisAu * (Math.cos(eccentricAnomaly) - orbit.eccentricity)
+  const y = orbit.semiMajorAxisAu * Math.sqrt(1 - orbit.eccentricity ** 2) * Math.sin(eccentricAnomaly)
+  return toScenePosition(rotateOrbitalPlane(orbit.inclinationDeg, orbit.ascendingNodeDeg, orbit.argumentPerihelionDeg, x, y), scale)
+}
+
+/** JPL osculating elements, propagated for display; not a mission ephemeris. */
+export function ellipticPositionAt(orbit: EllipticOrbit, timestampMs: number, scale = DISTANCE_SCENE_FACTOR) {
+  const epochMs = (orbit.epochJd - 2440587.5) * DAY_MS
+  const anomaly = degreesToRadians(normalizeDegrees(orbit.meanAnomalyDeg + 360 * (timestampMs - epochMs) / DAY_MS / orbit.periodDays))
+  return ellipticPoint(orbit, solveEccentricAnomaly(anomaly, orbit.eccentricity), scale)
+}
+
+export function ellipticOrbitPoints(orbit: EllipticOrbit, scale = DISTANCE_SCENE_FACTOR) {
+  return Array.from({ length: 257 }, (_, index) => ellipticPoint(orbit, index / 256 * Math.PI * 2, scale))
+}

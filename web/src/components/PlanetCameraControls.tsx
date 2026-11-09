@@ -35,7 +35,7 @@ interface PlanetCameraControlsProps {
 }
 
 const OVERVIEW_POSITIONS = {
-  perspective: new THREE.Vector3(46, 38, 58),
+  perspective: new THREE.Vector3(32, 54, 36),
   top: new THREE.Vector3(0, 78, 0),
   front: new THREE.Vector3(0, 0, 78),
   side: new THREE.Vector3(78, 0, 0),
@@ -79,7 +79,8 @@ export function PlanetCameraControls({
   const controlsRef = useRef<OrbitControlsImpl>(null)
   const lastRequestId = useRef(-1)
   const lastPlanetPosition = useRef<THREE.Vector3 | null>(null)
-  const { camera } = useThree()
+  const { camera, size } = useThree()
+  const lastAspect = useRef(0)
   const overviewMaxDistance = 5000
   const overviewFar = 10_000
   const planetMinDistance = Math.max(focusRadius * 1.12, 0.0015)
@@ -90,12 +91,14 @@ export function PlanetCameraControls({
     const controls = controlsRef.current
     if (!controls) return
 
-    const isNewRequest = request.requestId !== lastRequestId.current
+    const aspect = size.width / Math.max(1, size.height)
+    const isNewRequest = request.requestId !== lastRequestId.current || lastAspect.current !== aspect
+    lastAspect.current = aspect
     if (request.kind === 'overview') {
       if (isNewRequest) {
         controls.target.set(0, 0, 0)
         camera.up.set(0, request.view === 'top' ? 0 : 1, request.view === 'top' ? -1 : 0)
-        camera.position.copy(OVERVIEW_POSITIONS[request.view])
+        camera.position.copy(OVERVIEW_POSITIONS[request.view]).multiplyScalar(Math.max(1, 1 / aspect))
         camera.near = 0.0001
         camera.far = overviewFar
         camera.updateProjectionMatrix()
@@ -136,7 +139,7 @@ export function PlanetCameraControls({
 
     lastRequestId.current = request.requestId
     lastPlanetPosition.current = focusPosition.clone()
-  }, [camera, focusPosition, focusPosition?.x, focusPosition?.y, focusPosition?.z, focusRadius, request])
+  }, [camera, focusPosition, focusPosition?.x, focusPosition?.y, focusPosition?.z, focusRadius, request, size.width, size.height])
 
   const focused = request.kind !== 'overview'
   const minimumDistance = focused ? planetMinDistance : 0.0015

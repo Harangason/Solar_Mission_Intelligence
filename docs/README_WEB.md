@@ -76,3 +76,31 @@ npm run test:ui-assets
 Der Assettest prüft alle in `planetTextures.ts` referenzierten JPEGs. Eine fehlende
 Jupiter-Textur aus dem zusammengeführten `main`-Stand wurde wiederhergestellt,
 da sie die 3D-Ansicht beim Laden abbrechen ließ.
+
+
+## Animierte Orbitalansichten
+
+Die Draufsicht und Kantenansicht verwenden den verfügbaren Plotbereich ohne helle
+Ränder. Objektdaten lassen sich als zusätzliche Ansicht einblenden; der KI-Chat
+im Berechnungsbereich ist zunächst eingeklappt. Der separate Animationsregler
+(Pause, Tempo, Zurücksetzen) verändert weder Missionsdatum noch Solver-Zustand.
+Bei reduzierter Bewegung startet die Animation pausiert. In ausgeblendeten Tabs
+wird die Zeit angehalten; beim Zurückkehren werden keine großen Zeitsprünge nachgeholt.
+
+2D zeigt bis zu 16 Monde des ausgewählten Planeten mit vorhandenen JPL-Bahndaten.
+Körpermarker und Mondabstände sind zur Erkennbarkeit vergrößert. Die drei
+Asteroiden Ceres, Pallas und Vesta sowie die Kometen Halley und 67P verwenden den
+lokalen Katalog `web/public/small-bodies.json` mit Quellen und Bahnepochen der
+[NASA/JPL SBDB API](https://ssd-api.jpl.nasa.gov/doc/sbdb.html). Ihre Bahnen werden
+mit der gemeinsamen Kepler-Transformation angenähert, nicht als präzise
+Missions-Ephemeriden verwendet. Die Kometenschweife sind schematisch.
+
+3D bietet dieselbe freie Bahnanimation auch ohne berechnete Mission. Vorhandene
+Missionen behalten ihre eigene Wiedergabe. Die neue Himmelskugel vermeidet
+Kanten einer Hintergrund-Bildebene. Lesbare Übersichtsmarker führen per Klick
+zur texturierten Nahansicht; „Ganzes System“ stellt die Übersicht wieder her.
+Sternziele und Kleinkörper lassen sich getrennt einblenden. Die Hintergrundgestaltung
+ist illustrativ und keine Himmelskarte.
+
+Prüfung: `npm run test:orbital-display` kontrolliert Periodizität, stark elliptische
+Kometenbahnen, Katalogquellen, Ansichtsproportionen und begrenzte Zeitschritte.

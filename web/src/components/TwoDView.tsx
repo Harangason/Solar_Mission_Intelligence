@@ -1,3 +1,8 @@
+import { useOrbitalClock } from '../useOrbitalClock'
+import { fitOrbitViewport } from '../orbitViewport'
+import { useSmallBodies } from '../smallBodies'
+import { OrbitalAnimationControls } from './OrbitalAnimationControls'
+import { OrbitalBackdrop, OrbitalSmallBodies, OrbitalMoons } from './OrbitalScenery'
 import { TrajectoryPlannerPanel } from './TrajectoryPlannerPanel'
 import { trajectoryToWaypointRoute } from '../trajectoryToWaypointRoute'
 import { DEFAULT_ROUTE_SECTION, DEFAULT_ROUTE_PASSAGE } from '../routeSections'
@@ -686,6 +691,11 @@ export function TwoDView({
   const [selectedPlanetId, setSelectedPlanetId] = useState('earth')
   const [previewSectionId, setPreviewSectionId] = useState<string | null>(null)
   const [orbitZoom, setOrbitZoom] = useState(1)
+  const [plotSize, setPlotSize] = useState({ width: 960, height: 640 })
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [showMoons, setShowMoons] = useState(true)
+  const [showSmallBodies, setShowSmallBodies] = useState(true)
+  const { bodies: smallBodies, error: smallBodiesError } = useSmallBodies()
   const [constellationSearchStatus, setConstellationSearchStatus] = useState('')
   const [constellationSearchRunning, setConstellationSearchRunning] = useState(false)
   const [retrospectiveSearchEnabled, setRetrospectiveSearchEnabled] = useState(false)
@@ -730,6 +740,13 @@ export function TwoDView({
   const aiChatMessagesRef = useRef<HTMLDivElement>(null)
   const aiChatRequestRef = useRef<AbortController | null>(null)
   const aiPlausibilityRunRef = useRef('')
+  useEffect(() => {
+    const plot = orbitPlotRef.current
+    if (!plot) return
+    const observer = new ResizeObserver(() => setPlotSize({ width: plot.clientWidth, height: plot.clientHeight }))
+    observer.observe(plot)
+    return () => observer.disconnect()
+  }, [projection, data, displayOnly])
   const previousOrbitZoomRef = useRef(orbitZoom)
   const previousProjectionRef = useRef(projection)
   const orbitPanRef = useRef({
@@ -898,6 +915,10 @@ export function TwoDView({
     })) ?? [],
     [data, timestampMs, plannedRoute],
   )
+  const orbitClock = useOrbitalClock(timestampMs, projection !== 'corridor' || displayOnly, displayOnly && !plannedRoute)
+  const animatedGeometry = useMemo(() => orbitGeometry.map(item => ({ ...item,
+    position: planetPositionAt(item.planet, orbitClock.timestampMs),
+  })), [orbitGeometry, orbitClock.timestampMs])
   const selectedPlanet = data?.planets.find((planet) => planet.id === selectedPlanetId) ?? data?.planets[0] ?? null
   const selectedMoons = useMemo(
     () => selectedPlanet && moonCatalogue
@@ -1499,9 +1520,8 @@ export function TwoDView({
       ),
     }
   }, [data, moonCatalogue, orbitGeometry, orbitalProjection, plannedRoute, plannedRoutePoints.length, routeSections])
-  const viewBox = orbitalProjection === 'top'
-    ? `${-EXTENT} ${-EXTENT} ${EXTENT * 2} ${EXTENT * 2}`
-    : `${-EXTENT} ${-SIDE_HALF_HEIGHT} ${EXTENT * 2} ${SIDE_HALF_HEIGHT * 2}`
+  const viewport = fitOrbitViewport(plotSize.width, plotSize.height, EXTENT, orbitalProjection === 'side')
+  const viewBox = `${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`
 
   const scoreRouteConstellation = (timestamp: number, sections = routeSections) => {
     if (!data || !moonCatalogue || sections.length === 0) return null
@@ -3141,7 +3161,7 @@ export function TwoDView({
           <p className="eyebrow">{displayOnly ? '2D Darstellung' : 'Interaktiver Berechnungsbereich'}</p>
           <h1 id="two-d-title">{displayOnly ? 'Das Sonnensystem in 2D' : 'Berechnung & Routenplanung'}</h1>
         </div>
-        {!displayOnly && <aside className="ai-chat-panel" aria-label="Interaktiver KI-Chat fuer die 2D-Planung">
+        {!displayOnly && <details className="ai-chat-disclosure"><summary>KI-Assistent öffnen</summary><aside className="ai-chat-panel" aria-label="Interaktiver KI-Chat fuer die 2D-Planung">
           <header>
             <span>KI-Chat</span>
             <small><b className={`ai-chat-status ${aiServiceStatus?.ready ? 'ready' : 'unavailable'}`}>{aiStatusLoading ? 'wird geprüft' : aiServiceStatus?.ready ? aiServiceStatus.provider === 'ollama' ? 'lokal bereit' : 'konfiguriert' : 'nicht verfügbar'}</b> · {projectionLabel} · {activeRouteSection ? `${activeRouteSection.originId} -> ${activeRouteSection.targetId}` : 'noch keine Route'}</small>
@@ -3220,7 +3240,7 @@ export function TwoDView({
             <button type="submit" disabled={aiChatLoading || !aiServiceStatus?.ready || !aiChatInput.trim()}>Senden</button>
           </form>
           {aiServiceStatus?.provider === 'ollama' && <small className="ai-chat-capabilities">Textchat lokal verfügbar. Spracheingabe benötigt ein Transkriptionsmodell.</small>}
-        </aside>}
+        </aside></details>}
       </div>
 
       {!displayOnly && <TrajectoryPlannerPanel
@@ -3333,7 +3353,7 @@ export function TwoDView({
               </button>
               <output>{Math.round(orbitZoom * 100)}%</output>
             </div>
-            <output className={plannedMissionDate ? 'mission-epoch' : ''}>{epochLabel}</output>
+            <output className={plannedMissionDate ? 'mission-epoch' : ''}>Basis: {epochLabel}</output>
           </>
         )}
       </div>
@@ -3395,11 +3415,22 @@ export function TwoDView({
         )
         : (
           <>
+            <div className="orbit-explorer-toolbar">
+              <OrbitalAnimationControls clock={orbitClock} />
+              <div className="orbit-layer-controls">
+                <label><input type="checkbox" checked={showMoons} onChange={event => setShowMoons(event.target.checked)} /> Monde</label>
+                <label><input type="checkbox" checked={showSmallBodies} onChange={event => setShowSmallBodies(event.target.checked)} /> Asteroiden & Kometen</label>
+                <label>Planet <select aria-label="Planet in der Bahnansicht" value={selectedPlanetId} onChange={event => setSelectedPlanetId(event.target.value)}>{data.planets.map(planet => <option key={planet.id} value={planet.id}>{planet.name}</option>)}</select></label>
+                <button type="button" aria-expanded={detailsOpen} aria-controls="orbit-object-details" onClick={() => setDetailsOpen(!detailsOpen)}>{detailsOpen ? 'Objektdaten schließen' : 'Objektdaten anzeigen'}</button>
+                <button type="button" onClick={() => { setOrbitZoom(1); orbitPlotRef.current?.scrollTo(0, 0) }}>Ansicht einpassen</button>
+              </div>
+            </div>
+            {smallBodiesError && <p role="status">Asteroiden- und Kometendaten konnten nicht geladen werden.</p>}
             <div className="two-d-orbit-workspace">
               <div
                 ref={orbitPlotRef}
                 className={`plot-frame orbital-plot ${projection}`}
-                style={{ '--orbit-zoom-width': `${orbitZoom * 100}%` } as CSSProperties}
+                style={{ '--orbit-zoom-width': `${orbitZoom * 100}%`, '--orbit-label-size': `${12 * viewport.width / plotSize.width}px`, '--orbit-small-label-size': `${10 * viewport.width / plotSize.width}px` } as CSSProperties}
                 onPointerDown={beginOrbitPan}
                 onPointerMove={moveOrbitPan}
                 onPointerUp={endOrbitPan}
@@ -3416,7 +3447,7 @@ export function TwoDView({
                       <path d="M 0 0 L 10 5 L 0 10 z" />
                     </marker>
                   </defs>
-                  <rect x={-EXTENT} y={orbitalProjection === 'top' ? -EXTENT : -SIDE_HALF_HEIGHT} width={EXTENT * 2} height={orbitalProjection === 'top' ? EXTENT * 2 : SIDE_HALF_HEIGHT * 2} className="orbital-background" />
+                  <OrbitalBackdrop {...viewport} />
                   <line x1={-EXTENT} y1="0" x2={EXTENT} y2="0" className="ecliptic-line" />
 
                   {orbitalProjection === 'top' && orbitGeometry.map(({ planet, orbit }) => (
@@ -3510,14 +3541,16 @@ export function TwoDView({
                     </g>
                   )}
 
-                  <circle cx="0" cy="0" r="0.45" className="two-d-sun" />
-                  {orbitalProjection === 'top' && <text x="0.7" y="-0.65" className="orbital-label">Sonne · Ekliptik 0°</text>}
+                  {showSmallBodies && <OrbitalSmallBodies bodies={smallBodies} timestampMs={orbitClock.timestampMs} side={orbitalProjection === 'side'} />}
+                  {showMoons && selectedPlanet && <OrbitalMoons moons={selectedMoons} center={planetPositionAt(selectedPlanet, orbitClock.timestampMs)} timestampMs={orbitClock.timestampMs} side={orbitalProjection === 'side'} />}
+                  <circle cx="0" cy="0" r="0.55" className="two-d-sun" />
+                  {orbitalProjection === 'top' && <text x="0.7" y="1.4" className="orbital-label">Sonne</text>}
 
-                  {orbitGeometry.map(({ planet, position }, index) => {
+                  {animatedGeometry.map(({ planet, position }, index) => {
                     const [x, y] = project(position, orbitalProjection)
                     const isSelected = planet.id === selectedPlanet?.id
                     const labelY = SIDE_LABEL_Y[index] ?? y
-                    const markerRadius = planet.id === 'jupiter' || planet.id === 'saturn' ? 0.3 : 0.2
+                    const markerRadius = planet.id === 'jupiter' || planet.id === 'saturn' ? 0.48 : 0.32
                     const selectPlanet = () => setSelectedPlanetId(planet.id)
                     return (
                       <g
@@ -3546,7 +3579,7 @@ export function TwoDView({
                         <circle cx={x} cy={y} r="0.62" className="planet-hit-target" />
                         {isSelected && <circle cx={x} cy={y} r={markerRadius + 0.24} className="planet-selection-ring" />}
                         <circle cx={x} cy={y} r={markerRadius} fill={planet.color} className="two-d-planet" />
-                        {orbitalProjection === 'top' && <text x={x + 0.38} y={y - 0.35} className="orbital-label">{planet.name}</text>}
+                        {orbitalProjection === 'top' && (index > 3 || isSelected || orbitZoom >= 2) && <text x={x + 0.55} y={y - 0.35} className="orbital-label">{planet.name}</text>}
                         {orbitalProjection === 'side' && (
                           <>
                             <line x1={x} y1={y} x2={x} y2={labelY} className="planet-label-leader" />
@@ -3571,14 +3604,14 @@ export function TwoDView({
                 </svg>
               </div>
 
-              {selectedPlanet && (
-                <TwoDPlanetDetails
+              {selectedPlanet && detailsOpen && (
+                <div id="orbit-object-details" className="orbit-object-details"><TwoDPlanetDetails
                   planet={selectedPlanet}
                   planets={data.planets}
                   moons={selectedMoons}
-                  epochLabel={epochLabel}
+                  epochLabel={`Ansichtszeit · ${new Date(orbitClock.timestampMs).toLocaleDateString('de-DE', { timeZone: 'UTC' })}`}
                   onPlanetChange={setSelectedPlanetId}
-                />
+                /></div>
               )}
             </div>
             {!plannedRoute && routeSketchSegments.some((segment) => segment.passageCorridors) && (
@@ -3587,7 +3620,7 @@ export function TwoDView({
                 <span className="exit">Austrittskorridor</span>
               </div>
             )}
-            <p className="two-d-footnote">Kantenansicht: aktuelle Planetenpositionen gegen Ekliptikhöhe · Draufsicht: aktuelle Positionen auf realen J2000-Bahnen · Korridorpassagen sind zur Lesbarkeit schematisch vergrößert.</p>
+            <p className="two-d-footnote">Bahnanimation · Entfernungen √AE · Körper und Mondabstände vergrößert · Bis zu 16 Monde des ausgewählten Planeten mit bekannten Bahndaten. Asteroiden und Kometen: <a href="https://ssd-api.jpl.nasa.gov/doc/sbdb.html" target="_blank" rel="noreferrer">NASA/JPL</a>, Kepler-Näherung; Kometenschweife schematisch. Berechnete Routen und Missionsdaten bleiben unverändert.</p>
           </>
         )}
       {previewSection && (

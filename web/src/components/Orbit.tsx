@@ -15,5 +15,5 @@ export function Orbit({ planet, distanceScale, inclinationScale }: OrbitProps) {
     () => createOrbitPoints(planet, distanceScale, inclinationScale),
     [distanceScale, inclinationScale, planet],
   )
-  return <Line points={points} color="#71809a" transparent opacity={0.32} lineWidth={0.7} />
+  return <Line points={points} color={planet.color} transparent opacity={0.45} lineWidth={0.85} />
 }

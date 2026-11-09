@@ -1,3 +1,8 @@
+import { moonDisplayDistance } from '../moonMath'
+import { useOrbitalClock } from '../useOrbitalClock'
+import { useSmallBodies } from '../smallBodies'
+import { OrbitalAnimationControls } from './OrbitalAnimationControls'
+import { SmallBodies } from './SmallBodies'
 import { trajectoryToWaypointRoute } from '../trajectoryToWaypointRoute'
 import { useRouteEphemerides } from '../bodyEphemerides'
 import { GizmoHelper, GizmoViewport, Grid, PerformanceMonitor, Stars } from '@react-three/drei'
@@ -82,7 +87,7 @@ const WEBGL_RENDERER_OPTIONS: THREE.WebGLRendererParameters = {
   preserveDrawingBuffer: false,
 }
 
-const WEBGL_CAMERA = { position: [46, 38, 58] as [number, number, number], fov: 48, near: 0.0001, far: 2_000 }
+const WEBGL_CAMERA = { position: [32, 54, 36] as [number, number, number], fov: 48, near: 0.0001, far: 2_000 }
 type AimpointRole = 'entry' | 'periapsis' | 'exit' | 'periapsis_point'
 
 function scaledRadius(planet: PlanetData, sunRadiusKm: number, visual: VisualConfig) {
@@ -235,6 +240,12 @@ export function ThreeDView({
   const [simulationSpeed, setSimulationSpeed] = useState(30)
   const [stepDays, setStepDays] = useState(1)
   const [showMoons, setShowMoons] = useState(true)
+  const [moonOverview, setMoonOverview] = useState(false)
+  const [showSmallBodies, setShowSmallBodies] = useState(true)
+  const [showSkyTargets, setShowSkyTargets] = useState(false)
+  const [explorerLabels, setExplorerLabels] = useState(true)
+  const { bodies: smallBodies, error: smallBodiesError } = useSmallBodies()
+  const explorerEpoch = useMemo(() => Date.now(), [])
   const [navigationMode, setNavigationMode] = useState<'rotate' | 'pan'>('rotate')
   const [missionPlannerOpen, setMissionPlannerOpen] = useState(() => window.innerWidth >= 1_100)
   const [parameterPanelOpen, setParameterPanelOpen] = useState(() => window.innerWidth >= 1_440)
@@ -677,7 +688,9 @@ export function ThreeDView({
     setSelectedTargetId(finalTargetId)
   }, [routeSections, selectedTargetId])
   useRouteEphemerides(plannedRoute?.bodyEphemerides)
-  const timestampMs = new Date(activeStartDate).getTime() + elapsedDays * 86_400_000
+  const freeExploration = !plannedRoute && !visibleMissionResult && routePlanStatus === 'hidden'
+  const orbitClock = useOrbitalClock(explorerEpoch, freeExploration, true)
+  const timestampMs = freeExploration ? orbitClock.timestampMs : new Date(activeStartDate).getTime() + elapsedDays * 86_400_000
   const focusedPlanet = cameraFocusRequest.kind === 'planet'
     ? data?.planets.find((planet) => planet.id === cameraFocusRequest.planetId) ?? null
     : null
@@ -690,11 +703,17 @@ export function ThreeDView({
     },
     [cameraFocusRequest, focusedPlanet, timestampMs, visual.inclinationScale, visual.orbitScale, plannedRoute],
   )
-  const focusedPlanetRadius = cameraFocusRequest.kind === 'point'
+  const knownSelectedMoons = useMemo(() => selectedMoons.filter(moon => moon.orbitSource && moon.orbitalPeriodDays && moon.semiMajorAxisKm), [selectedMoons])
+  const bodyFocusRadius = cameraFocusRequest.kind === 'point'
     ? cameraFocusRequest.radius
     : focusedPlanet && data
       ? scaledRadius(focusedPlanet, data.sun.radiusKm, visual)
       : 0.01
+  const focusedPlanetRadius = moonOverview && focusedPlanet && selectedMoons.length
+    ? Math.max(bodyFocusRadius, ...selectedMoons.filter(moon => moon.orbitSource).map((moon, index) =>
+      moonDisplayDistance(moon, index, selectedMoons.length, bodyFocusRadius,
+        selectedMoons.flatMap(item => item.semiMajorAxisKm ? [item.semiMajorAxisKm] : [])) * (1 + (moon.eccentricity ?? 0)) / 2))
+    : bodyFocusRadius
   const selectedTargetScenePosition = useMemo(() => {
     if (!selectedTarget) return undefined
     const cataloguePosition = interstellarTargetPosition(selectedTarget)
@@ -880,6 +899,7 @@ export function ThreeDView({
   }, [deleteSelectedSketchElement, routePlanStatus, undoRouteSketch])
 
   const selectPlanet = (planet: PlanetData) => {
+    setMoonOverview(false)
     setSelectedPlanet(planet)
     setSelectedObject(planet.id)
     setSelectedMoon(null)
@@ -896,6 +916,7 @@ export function ThreeDView({
     }
   }
   const focusSelectedPlanet = () => {
+    setMoonOverview(false)
     if (!selectedPlanet) return
     setCameraFocusRequest((current) => ({ kind: 'planet', planetId: selectedPlanet.id, requestId: current.requestId + 1 }))
   }
@@ -1278,8 +1299,9 @@ export function ThreeDView({
       >
         <span aria-hidden="true">{parameterPanelOpen ? '›' : '‹'}</span>
       </button>
-      <div className={`scene-wrap navigation-${navigationMode}`}>
+      <div className={`scene-wrap navigation-${navigationMode} ${freeExploration ? 'orbital-explorer-scene' : ''}`}>
         <Canvas
+          role="img" aria-label="Animiertes Sonnensystem in 3D"
           camera={WEBGL_CAMERA}
           dpr={rendererDpr}
           gl={WEBGL_RENDERER_OPTIONS}
@@ -1287,11 +1309,11 @@ export function ThreeDView({
           fallback={<div className="webgl-fallback">WebGL konnte nicht initialisiert werden. Bitte Hardwarebeschleunigung im Browser aktivieren.</div>}
         >
           <color attach="background" args={['#02050d']} />
-          <fog attach="fog" args={['#02050d', 95, 240]} />
+
           <PerformanceMonitor flipflops={3} onDecline={reduceRendererLoad} onIncline={restoreRendererQuality} onFallback={reduceRendererLoad} />
-          <ambientLight intensity={0.18} />
+          <ambientLight intensity={0.38} />
           <hemisphereLight args={['#8fcfff', '#09030f', 0.22]} />
-          <Stars radius={120} depth={60} count={2200} factor={3} saturation={0.25} fade speed={0.3} />
+          <Stars radius={120} depth={60} count={4200} factor={2} saturation={0.25} fade speed={0.3} />
           <MilkyWayBackground />
           {routePlanStatus === 'review' && <Grid
             args={[180, 180]}
@@ -1307,7 +1329,7 @@ export function ThreeDView({
             side={THREE.DoubleSide}
           />}
           <Sun sun={data.sun} orbitScale={visual.orbitScale} sizeScale={visual.planetScale} />
-          <InterstellarTargets
+          {(showSkyTargets || !freeExploration) && <InterstellarTargets
             targets={INTERSTELLAR_TARGETS}
             selectedId={selectedTargetId}
             onSelect={(target) => selectInterstellarTarget(target.id)}
@@ -1315,7 +1337,7 @@ export function ThreeDView({
             selectedPositionOverride={selectedTargetScenePosition}
             hideGuide={Boolean(routePlanStatus !== 'hidden' || (showRouteGuide && (plannedRoute || directSolarRoute)))}
             onInfoDragChange={handleInfoDragChange}
-          />
+          />}
           {routePlanStatus === 'review' && routePlanNodes && routeSketch && (
             <RoutePlanPreview
               {...routePlanNodes}
@@ -1353,14 +1375,15 @@ export function ThreeDView({
                       distanceScale={visual.orbitScale}
                       inclinationScale={visual.inclinationScale}
                       ringScale={visual.saturnRingScale}
-                      showLabels={visual.showLabels}
+                      showLabels={freeExploration ? explorerLabels : visual.showLabels}
+                      showOverviewMarker={freeExploration && cameraFocusRequest.kind === 'overview'}
                       onSelect={selectPlanet}
                     />
                   </Suspense>
                 )}
                 {showMoons && visual.showPlanets && selectedPlanet?.id === planet.id && selectedMoons.length > 0 && (
                   <MoonSystem
-                    moons={selectedMoons}
+                    moons={knownSelectedMoons}
                     planet={planet}
                     planetSize={size}
                     timestampMs={timestampMs}
@@ -1372,6 +1395,7 @@ export function ThreeDView({
               </group>
             )
           })}
+          {showSmallBodies && <SmallBodies bodies={smallBodies} timestampMs={timestampMs} scale={visual.orbitScale} labels={explorerLabels && freeExploration} />}
           {visibleMissionResult && !plannedRoute && <MissionTrajectory result={visibleMissionResult} elapsedDays={elapsedDays} visual={visual} />}
           {plannedRoute && routePlanStatus !== 'review' && <PlannedWaypointRoute route={plannedRoute} orbitScale={visual.orbitScale} inclinationScale={visual.inclinationScale} elapsedDays={elapsedDays} showDispersion={showRouteDispersion} dispersionWidth={dispersionWidth} showNavigationGuide={showRouteGuide} encounterBodyRadius={encounterPlanetRadius} probeScale={visual.probeScale} targetPosition={selectedTargetScenePosition} onInfoDragChange={handleInfoDragChange} />}
           {showAlternativeRoutes && directSolarRoute && <DirectSolarRoute route={directSolarRoute} orbitScale={visual.orbitScale} inclinationScale={visual.inclinationScale} showNavigationGuide={showRouteGuide && routePlanStatus === 'hidden'} targetPosition={selectedTargetScenePosition} onInfoDragChange={handleInfoDragChange} />}
@@ -1404,10 +1428,12 @@ export function ThreeDView({
 
         <div className="webgl-renderer-status" aria-live="polite" title={rendererInfo ? `Maximale Texturgröße ${rendererInfo.maxTextureSize}px` : 'Renderer wird initialisiert'}>
           <span aria-hidden="true" />
-          <strong>{rendererInfo?.api ?? 'WebGL'}</strong>
-          <small>{rendererInfo ? `${rendererProfile === 'stabil' ? 'Stabilprofil' : 'Sparprofil'} · DPR ${rendererDpr.toFixed(1)} · AA ${rendererInfo.antialias ? 'an' : 'aus'} · ACES` : 'initialisiert …'}</small>
+          <strong>{rendererInfo ? '3D aktiv' : '3D lädt …'}</strong>
+          <small>{rendererProfile === 'sparsam' ? 'Flüssige Darstellung' : 'Orbitalansicht'}</small>
         </div>
 
+        {freeExploration && <div className="scene-orbit-clock"><OrbitalAnimationControls clock={orbitClock} /></div>}
+        {smallBodiesError && <p className="scene-data-error" role="status">Kleinkörperdaten konnten nicht geladen werden.</p>}
         <div className="mission-hud">
           {routePlanStatus === 'review' ? <>
             <span className="mission-status warning">ENTWURF</span>
@@ -1423,8 +1449,8 @@ export function ThreeDView({
             <span>Tag {elapsedDays.toFixed(1)} / {visibleMissionResult.summary.totalFlightDays.toFixed(0)}</span>
           </> : <>
             <span className="mission-status">BEREIT</span>
-            <strong>Noch keine Satellitenbahn berechnet</strong>
-            <span>Parameter einstellen und Simulation starten</span>
+            <strong>Das Sonnensystem entdecken</strong>
+            <span>Planet wählen für Nahansicht und Monde</span>
           </>}
         </div>
         <div className="time-controls" role="group" aria-label="Schnellsteuerung">
@@ -1516,9 +1542,12 @@ export function ThreeDView({
             <button className="quick-route-calculate" type="button" disabled={routeLoading || Boolean(routeCalculationBlockReason) || (corridorBlocked && !corridorRequiresDynamicCheck)} onClick={plannedRoute ? () => void calculateWaypointRoute() : onOpenRouteSelector}>{routeLoading ? 'Validiert …' : !plannedRoute ? 'Solver-Route auswählen' : routeValidationPending ? 'Route mit Satellit validieren' : 'Satellit neu validieren'}</button>
           </>}
           {routePlanStatus !== 'review' && <>
-            <button className={playing ? 'active' : ''} type="button" disabled={!canPlay || playbackAuditStatus === 'starting'} onClick={() => void toggleMissionPlayback()}>{playing ? 'Pause' : playbackAuditStatus === 'starting' ? 'Log startet …' : 'Mission abspielen'}</button>
+            {!freeExploration && <button className={playing ? 'active' : ''} type="button" disabled={!canPlay || playbackAuditStatus === 'starting'} onClick={() => void toggleMissionPlayback()}>{playing ? 'Pause' : playbackAuditStatus === 'starting' ? 'Log startet …' : 'Mission abspielen'}</button>}
             <button className={showMoons ? 'active' : ''} type="button" aria-pressed={showMoons} onClick={() => setShowMoons((visible) => !visible)}>Monde · {showMoons ? 'an' : 'aus'}</button>
-            <button type="button" disabled={!canPlay} onClick={() => setSelectedObject('probe')}>Sonde</button>
+            {!freeExploration && <button type="button" disabled={!canPlay} onClick={() => setSelectedObject('probe')}>Sonde</button>}
+            <button type="button" aria-pressed={showSmallBodies} onClick={() => setShowSmallBodies(value => !value)}>Kleinkörper</button>
+            <button type="button" aria-pressed={explorerLabels} onClick={() => setExplorerLabels(value => !value)}>Namen</button>
+            <button type="button" aria-pressed={showSkyTargets} onClick={() => setShowSkyTargets(value => !value)}>Sternziele</button>
           </>}
           <button className={navigationMode === 'pan' ? 'active' : ''} type="button" aria-pressed={navigationMode === 'pan'} onClick={() => setNavigationMode('pan')}>Ziehen</button>
           <button className={navigationMode === 'rotate' ? 'active' : ''} type="button" aria-pressed={navigationMode === 'rotate'} onClick={() => setNavigationMode('rotate')}>Drehen</button>
@@ -1937,34 +1966,39 @@ export function ThreeDView({
           </div>
         )}
         <div className="planet-view-actions" aria-label="Kamerafokus">
-          <button type="button" onClick={() => showCameraView('perspective')}>3D-Perspektive</button>
+          <button type="button" onClick={() => setCameraFocusRequest(current => ({ kind: 'overview', view: 'perspective', requestId: current.requestId + 1 }))}>Ganzes System</button>
+          {cameraFocusRequest.kind !== 'overview' && <button type="button" onClick={() => showCameraView('perspective')}>3D-Perspektive</button>}
           <button type="button" onClick={() => showCameraView('top')}>Draufsicht</button>
           <button type="button" onClick={() => showCameraView('front')}>Vorderansicht</button>
           <button type="button" onClick={() => showCameraView('side')}>Seitenansicht</button>
-          <button
+          {cameraFocusRequest.kind !== 'overview' && <><button
             type="button"
-            aria-pressed={cameraFocusRequest.kind !== 'overview' && cameraFocusRequest.view === 'sun-to-target'}
+            aria-pressed={cameraFocusRequest.view === 'sun-to-target'}
             onClick={() => showCameraView('sun-to-target')}
           >
             Von Sonne zum Ziel
           </button>
           <button
             type="button"
-            disabled={cameraFocusRequest.kind === 'overview'}
-            aria-pressed={cameraFocusRequest.kind !== 'overview' && cameraFocusRequest.view === 'sun-behind'}
+            aria-pressed={cameraFocusRequest.view === 'sun-behind'}
             onClick={() => showCameraView('sun-behind')}
           >
             Sonne dahinter
           </button>
           <button
             type="button"
-            disabled={cameraFocusRequest.kind === 'overview'}
-            aria-pressed={cameraFocusRequest.kind !== 'overview' && cameraFocusRequest.view === 'cross-axis'}
+            aria-pressed={cameraFocusRequest.view === 'cross-axis'}
             onClick={() => showCameraView('cross-axis')}
           >
             Queransicht 90°
           </button>
-          <button type="button" disabled={cameraFocusRequest.kind !== 'point' && !selectedPlanet} onClick={refocusCurrentObject}>
+          </>}
+          <button type="button" disabled={!selectedPlanet || !selectedMoons.some(moon => moon.orbitSource)} onClick={() => {
+            if (!selectedPlanet) return
+            setShowMoons(true); setMoonOverview(true)
+            setCameraFocusRequest(current => ({ kind: 'planet', planetId: selectedPlanet.id, requestId: current.requestId + 1 }))
+          }}>Mondsystem</button>
+          <button type="button" disabled={cameraFocusRequest.kind !== 'point' && !selectedPlanet} onClick={() => { setMoonOverview(false); refocusCurrentObject() }}>
             {cameraFocusRequest.kind === 'point'
               ? `${cameraFocusRequest.label} fokussieren`
               : selectedPlanet
@@ -1999,7 +2033,7 @@ export function ThreeDView({
         showTrajectoryPlanner={!displayOnly}
       />
       {visual.showScaleNotice && (
-        <p className="floating-scale-note">Orbitale Darstellung: {visual.orbitScale} × √AE · Neigungen vertikal ×{visual.inclinationScale} · Körperradien proportional zueinander · Missionsbahn {plannedRoute?.genericTrajectoryPlan ? plannedRoute.genericTrajectoryPlan.summary.model : 'RK4 / N-Körper'}</p>
+        <p className="floating-scale-note">Orbitale Darstellung: {visual.orbitScale} × √AE · Neigungen vertikal ×{visual.inclinationScale} · Körperradien proportional; Übersichtsmarker vergrößert · Missionsbahn {plannedRoute?.genericTrajectoryPlan ? plannedRoute.genericTrajectoryPlan.summary.model : 'RK4 / N-Körper'}</p>
       )}
     </section>
   )

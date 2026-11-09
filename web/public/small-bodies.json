@@ -1,0 +1,82 @@
+{
+  "source": "NASA/JPL Small-Body Database",
+  "retrievedAt": "2026-11-08",
+  "model": "Osculating elements propagated with a two-body Kepler approximation; display only. Epochs are TDB (UTC difference negligible at display precision).",
+  "bodies": [
+    {
+      "id": "1",
+      "name": "1 Ceres (A801 AA)",
+      "kind": "asteroid",
+      "color": "#d5bc96",
+      "epochJd": 2461200.5,
+      "semiMajorAxisAu": 2.765552595034094,
+      "eccentricity": 0.07969229514816586,
+      "inclinationDeg": 10.58802780183462,
+      "ascendingNodeDeg": 80.24862682043221,
+      "argumentPerihelionDeg": 73.29421453021587,
+      "meanAnomalyDeg": 274.4193463761342,
+      "periodDays": 1679.853119758983,
+      "source": "https://ssd-api.jpl.nasa.gov/sbdb.api?des=1&full-prec=1"
+    },
+    {
+      "id": "2",
+      "name": "2 Pallas (A802 FA)",
+      "kind": "asteroid",
+      "color": "#b6c2d1",
+      "epochJd": 2461200.5,
+      "semiMajorAxisAu": 2.769559010737709,
+      "eccentricity": 0.2307000995648547,
+      "inclinationDeg": 34.93279321851542,
+      "ascendingNodeDeg": 172.8866193357694,
+      "argumentPerihelionDeg": 310.9699161652136,
+      "meanAnomalyDeg": 254.2496521742734,
+      "periodDays": 1683.504809564834,
+      "source": "https://ssd-api.jpl.nasa.gov/sbdb.api?des=2&full-prec=1"
+    },
+    {
+      "id": "4",
+      "name": "4 Vesta (A807 FA)",
+      "kind": "asteroid",
+      "color": "#e6c99b",
+      "epochJd": 2461200.5,
+      "semiMajorAxisAu": 2.361365965127599,
+      "eccentricity": 0.09020374382834395,
+      "inclinationDeg": 7.143925545058711,
+      "ascendingNodeDeg": 103.701293265032,
+      "argumentPerihelionDeg": 151.4686478221564,
+      "meanAnomalyDeg": 81.19015607686903,
+      "periodDays": 1325.389042911101,
+      "source": "https://ssd-api.jpl.nasa.gov/sbdb.api?des=4&full-prec=1"
+    },
+    {
+      "id": "1P",
+      "name": "1P/Halley",
+      "kind": "comet",
+      "color": "#6fe7e1",
+      "epochJd": 2439875.5,
+      "semiMajorAxisAu": 17.92863504856923,
+      "eccentricity": 0.9679359956953211,
+      "inclinationDeg": 162.1905300439129,
+      "ascendingNodeDeg": 59.09894720612437,
+      "argumentPerihelionDeg": 112.2414314637764,
+      "meanAnomalyDeg": 274.3823371366792,
+      "periodDays": 27728.04608790421,
+      "source": "https://ssd-api.jpl.nasa.gov/sbdb.api?des=1P&full-prec=1"
+    },
+    {
+      "id": "67P",
+      "name": "67P/Churyumov-Gerasimenko",
+      "kind": "comet",
+      "color": "#b6efff",
+      "epochJd": 2457305.5,
+      "semiMajorAxisAu": 3.462249490129549,
+      "eccentricity": 0.6409081308996354,
+      "inclinationDeg": 7.040294937543767,
+      "ascendingNodeDeg": 50.13557377155012,
+      "argumentPerihelionDeg": 12.79824970228189,
+      "meanAnomalyDeg": 8.859927425218402,
+      "periodDays": 2353.076067903661,
+      "source": "https://ssd-api.jpl.nasa.gov/sbdb.api?des=67P&full-prec=1"
+    }
+  ]
+}

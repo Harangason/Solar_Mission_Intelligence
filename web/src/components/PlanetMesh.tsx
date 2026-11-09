@@ -15,10 +15,11 @@ interface PlanetMeshProps {
   inclinationScale: number
   ringScale: number
   showLabels: boolean
+  showOverviewMarker?: boolean
   onSelect: (planet: PlanetData) => void
 }
 
-export function PlanetMesh({ planet, size, timestampMs, distanceScale, inclinationScale, ringScale, showLabels, onSelect }: PlanetMeshProps) {
+export function PlanetMesh({ planet, size, timestampMs, distanceScale, inclinationScale, ringScale, showLabels, showOverviewMarker = false, onSelect }: PlanetMeshProps) {
   const positionRef = useRef<THREE.Group>(null)
   const planetRef = useRef<THREE.Mesh>(null)
   const [hovered, setHovered] = useState(false)
@@ -38,6 +39,15 @@ export function PlanetMesh({ planet, size, timestampMs, distanceScale, inclinati
 
   return (
     <group ref={positionRef}>
+      {showOverviewMarker && <mesh onClick={event => { event.stopPropagation(); onSelect(planet) }}>
+        <sphereGeometry args={[Math.max(size, .15), 20, 20]} />
+        <meshBasicMaterial color={planet.color} />
+      </mesh>}
+      {showOverviewMarker && <Html center position={[0, 0, 0]}>
+        <button className="planet-overview-target" type="button" aria-label={`${planet.name} fokussieren`} onClick={() => onSelect(planet)}>
+          <i style={{ background: planet.color }} />{showLabels && <span>{planet.name}</span>}
+        </button>
+      </Html>}
       <mesh
         ref={planetRef}
         onClick={(event) => {
@@ -74,7 +84,7 @@ export function PlanetMesh({ planet, size, timestampMs, distanceScale, inclinati
           <meshStandardMaterial color="#d8c9a4" side={THREE.DoubleSide} transparent opacity={0.72} roughness={0.92} />
         </mesh>
       )}
-      {(hovered || showLabels) && (
+      {!showOverviewMarker && (hovered || showLabels) && (
         <Html center position={[0, size + 0.7, 0]}>
           <span className="planet-label">{planet.name}</span>
         </Html>

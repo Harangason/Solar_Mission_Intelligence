@@ -240,3 +240,78 @@ button { cursor: pointer; }
   .app-shell .workspace .wizard-connection { grid-template-columns: 1fr; }
   .app-shell .workspace .wizard-arrow { display: none; }
 }
+
+/* Orbital explorer: the plot owns the space; details are optional. */
+.two-d-planner { width: calc(100% - 48px); max-width: none; padding-top: 24px; }
+.two-d-planner .view-heading { align-items: flex-start; margin-bottom: 20px; gap: 24px; }
+.two-d-planner .view-heading h1 { font-size: clamp(26px, 2.8vw, 42px); margin-bottom: 0; }
+.ai-chat-disclosure { position: relative; width: min(450px, 45%); margin-left: auto; border: 1px solid var(--ui-line); background: var(--ui-surface); }
+.ai-chat-disclosure > summary { cursor: pointer; padding: 14px 18px; font-size: 14px; }
+.ai-chat-disclosure .ai-chat-panel { width: 100%; box-sizing: border-box; }
+.two-d-orbit-workspace { position: relative; display: block; }
+.app-shell .workspace .orbital-plot { background: #060e1d; border: 1px solid #253b52; box-shadow: none; scrollbar-gutter: auto; }
+.orbital-plot.top, .orbital-plot.side { height: clamp(440px, 66dvh, 850px); }
+.orbital-plot svg { background: #060e1d; }
+.orbital-label { font-size: .78px; fill: #e4edfa; paint-order: stroke; stroke: #060e1d; stroke-width: .16px; }
+.orbital-label.small-body-label { font-size: .58px; fill: #a9bdce; }
+.orbital-label.moon-orbit-label { font-size: .48px; fill: #d0e9ff; }
+.orbit-object-details { position: absolute; right: 16px; top: 16px; width: 280px; max-height: calc(100% - 32px); overflow: auto; border: 1px solid var(--ui-line); box-shadow: 0 8px 24px #0004; }
+.orbit-explorer-toolbar { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 16px; margin-bottom: 12px; border: 1px solid var(--ui-line); background: var(--ui-surface); }
+.orbital-animation-controls, .orbit-layer-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.orbital-animation-controls label, .orbit-layer-controls label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.orbital-animation-controls select, .orbit-layer-controls select { min-height: 36px; padding: 6px 8px; background: var(--ui-raised); color: var(--ui-text); border: 1px solid var(--ui-line-strong); }
+.orbital-animation-controls time { font: 500 13px 'IBM Plex Sans', sans-serif; font-variant-numeric: tabular-nums; }
+.orbit-layer-controls input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--ui-accent); }
+.two-d-footnote { line-height: 1.7; font-size: 12px; }
+.two-d-footnote a { color: var(--ui-accent); }
+.scene-orbit-clock { position: absolute; top: 70px; left: 20px; max-width: calc(100% - 40px); padding: 10px 12px; background: #101a28ed; border: 1px solid #344a61; color: #dceafb; }
+.scene-orbit-clock select { background: #182838; color: #edf5ff; border: 1px solid #527088; }
+.scene-orbit-clock button { min-height: 36px; border-radius: 0; background: #203446; border-color: #527088; color: #f4f8ff; }
+.scene-orbit-clock button.active { background: #0f62fe; }
+.scene-wrap.orbital-explorer-scene .time-controls { left: 20px; right: 20px; max-width: calc(100% - 40px); flex-wrap: wrap; }
+.scene-wrap.orbital-explorer-scene .mission-hud { top: 134px; left: 20px; max-width: calc(100% - 40px); background: #0b1522c9; border: 0; }
+.orbital-explorer-scene .webgl-renderer-status { display: none; }
+.orbital-explorer-scene .planet-view-actions { left: 50%; width: max-content; max-width: calc(100% - 48px); bottom: 46px; }
+.small-body-label-3d { padding: 2px 5px; color: #acc1d5; background: #07111dbb; white-space: nowrap; font: 11px 'IBM Plex Sans', sans-serif; }
+.scene-data-error { position: absolute; top: 180px; left: 20px; color: #ffcaaa; }
+@media (max-width: 1250px) {
+  .ai-chat-disclosure { width: 100%; }
+  .scene-orbit-clock { top: 116px; }
+  .scene-wrap.orbital-explorer-scene .mission-hud { top: 185px; }
+}
+@media (max-width: 700px) {
+  .two-d-planner { width: calc(100% - 24px); }
+  .orbit-explorer-toolbar { padding: 12px; }
+  .orbital-plot.top, .orbital-plot.side { height: 65dvh; min-height: 380px; }
+  .orbit-object-details { position: static; width: auto; margin-top: 12px; max-height: none; }
+  .scene-wrap.orbital-explorer-scene { min-height: 740px; }
+  .scene-orbit-clock { top: 164px; }
+  .scene-wrap.orbital-explorer-scene .mission-hud { display: none; }
+  .orbital-explorer-scene .planet-view-actions { bottom: 50px; }
+}
+
+.orbital-plot .orbital-label { font-size: var(--orbit-label-size, .85px); }
+.orbital-plot :is(.small-body-label, .moon-orbit-label) { font-size: var(--orbit-small-label-size, .65px); }
+.small-body-layer .asteroid { opacity: 0; }
+.small-body-layer g:hover .asteroid { opacity: 1; }
+.orbital-explorer-scene .planet-overview-target { display: flex; align-items: center; gap: 6px; padding: 0; min-height: 24px; border: 0; background: transparent; color: #e3effa; white-space: nowrap; transform: translateX(calc(50% - 4px)); font-size: 12px; cursor: pointer; }
+.planet-overview-target i { display: block; width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; box-shadow: 0 0 9px #a8cfff55; border: 1px solid #ffffff70; }
+.planet-overview-target span { padding: 2px 4px; background: #07101d90; }
+.planet-overview-target:hover span { background: #1d3c61; }
+.planet-overview-target:focus-visible { outline: 2px solid #78a9ff; }
+.orbital-explorer-scene .time-controls { right: auto; width: max-content; }
+.orbital-explorer-scene .planet-view-actions { padding: 6px; bottom: 44px; background: #0c1825df; }
+.orbital-explorer-scene .scene-help { display: none; }
+.mission-layout:has(.orbital-explorer-scene) .floating-scale-note { left: 20px; bottom: 8px; max-width: calc(100% - 40px); transform: none; border-radius: 0; text-align: left; padding: 6px 10px; font-size: 10px; }
+.scene-orbit-clock select { color-scheme: dark; background: #182838 !important; color: #edf5ff !important; }
+@media (max-height: 800px) and (min-width: 900px) {
+  .two-d-planner { padding-top: 16px; }
+  .two-d-planner .view-heading { margin-bottom: 12px; }
+  .two-d-planner .view-heading .eyebrow { margin-bottom: 8px; }
+  .two-d-planner .view-heading h1 { font-size: 28px; }
+  .orbital-plot.top, .orbital-plot.side { height: max(340px, calc(100dvh - 390px)); }
+}
+
+.scene-wrap.orbital-explorer-scene .time-controls { transform: none; }
+.mission-layout:has(.orbital-explorer-scene) > .sidebar-toggle { position: absolute; top: 12px; }
+.scene-wrap.orbital-explorer-scene .time-controls button[aria-pressed='true'] { background: #0f62fe; color: white; }

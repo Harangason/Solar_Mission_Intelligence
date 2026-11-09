@@ -1,64 +1,25 @@
-import { useTexture } from '@react-three/drei'
-import { useEffect, useMemo } from 'react'
+import { useFrame } from '@react-three/fiber'
+import { useRef } from 'react'
 import * as THREE from 'three'
 
-import { equatorialDirection, interstellarTargetDirection } from '../celestialCoordinates'
-import { INTERSTELLAR_TARGETS } from '../interstellarTargets'
-
-const GALACTIC_NORTH_POLE_J2000 = { rightAscensionDeg: 192.85948, declinationDeg: 27.12825 }
-
+// A continuous sky dome: no billboard edges, depth occlusion or image seams.
+const vertexShader = `varying vec3 skyDirection;
+void main() { skyDirection = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`
+const fragmentShader = `varying vec3 skyDirection;
+void main() {
+  vec3 d = normalize(skyDirection);
+  float latitude = dot(d, normalize(vec3(0.35, 0.83, -0.43)));
+  float band = exp(-latitude * latitude * 18.0);
+  float cloud = 0.52 + 0.18*sin(d.x*18.0 + sin(d.z*13.0)) + 0.13*sin(d.z*31.0+d.y*17.0);
+  vec3 base = vec3(0.012, 0.023, 0.048);
+  vec3 dust = mix(vec3(0.045, 0.07, 0.13), vec3(0.11, 0.075, 0.14), smoothstep(-0.7, 0.7, d.x));
+  gl_FragColor = vec4(base + dust * band * cloud, 1.0);
+}`
 export function MilkyWayBackground() {
-  const texture = useTexture('/assets/milky-way-sgra-background.png')
-  const transform = useMemo(() => {
-    const sgrA = INTERSTELLAR_TARGETS.find((target) => target.id === 'milky-way-center')
-    if (!sgrA) return null
-
-    const direction = interstellarTargetDirection(sgrA)
-    const galacticNorth = equatorialDirection(
-      GALACTIC_NORTH_POLE_J2000.rightAscensionDeg,
-      GALACTIC_NORTH_POLE_J2000.declinationDeg,
-    )
-    const up = galacticNorth
-      .sub(direction.clone().multiplyScalar(galacticNorth.dot(direction)))
-      .normalize()
-    const forward = direction.clone().negate()
-    const right = up.clone().cross(forward).normalize()
-    const rotation = new THREE.Quaternion().setFromRotationMatrix(
-      new THREE.Matrix4().makeBasis(right, up, forward),
-    )
-
-    return {
-      position: direction.multiplyScalar(245),
-      rotation,
-    }
-  }, [])
-
-  useEffect(() => {
-    texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 8
-    texture.needsUpdate = true
-  }, [texture])
-
-  if (!transform) return null
-
-  return (
-    <mesh
-      position={transform.position}
-      quaternion={transform.rotation}
-      renderOrder={-20}
-      raycast={() => null}
-    >
-      <planeGeometry args={[300, 150]} />
-      <meshBasicMaterial
-        map={texture}
-        color="#d7ddff"
-        transparent
-        opacity={0.72}
-        blending={THREE.AdditiveBlending}
-        depthWrite={false}
-        side={THREE.DoubleSide}
-        toneMapped={false}
-      />
-    </mesh>
-  )
+  const mesh = useRef<THREE.Mesh>(null)
+  useFrame(({ camera }) => { mesh.current?.position.copy(camera.position) })
+  return <mesh ref={mesh} renderOrder={-1000} frustumCulled={false} raycast={() => null}>
+    <sphereGeometry args={[1500, 32, 20]} />
+    <shaderMaterial vertexShader={vertexShader} fragmentShader={fragmentShader} side={THREE.BackSide} depthWrite={false} depthTest={false} toneMapped={false} fog={false} />
+  </mesh>
 }

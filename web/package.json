@@ -15,7 +15,8 @@
     "test:route-selection": "node --experimental-strip-types scripts/route-selection-logic.mjs",
     "test:moon-catalogue": "node scripts/natural-moon-filter-validation.mjs",
     "test:project-requests": "node --experimental-strip-types scripts/project-request-validation.mjs",
-    "test:ui-assets": "node --experimental-strip-types scripts/ui-assets-validation.mjs"
+    "test:ui-assets": "node --experimental-strip-types scripts/ui-assets-validation.mjs",
+    "test:orbital-display": "node --experimental-strip-types scripts/orbital-display-validation.mjs"
   },
   "dependencies": {
     "@react-three/drei": "latest",
