@@ -22,6 +22,7 @@ import type { RoutePassageDefinition } from '../routeSections'
 import type { MoonData, PlanetData, SunData } from '../types'
 import type { Vector3Tuple } from '../targetAlignedProjection'
 import { LocalPlanetThreeD } from './LocalPlanetThreeD'
+import type { LocalEncounterGeometry } from '../localEncounterGeometry'
 import { SunwardCorridorView } from './SunwardCorridorView'
 
 interface PlanetCorridorPlannerProps {
@@ -40,6 +41,7 @@ interface PlanetCorridorPlannerProps {
   onDeltaVPlusChange: (value: number) => void
   sectionNumber: number
   passage: RoutePassageDefinition
+  localEncounter?: LocalEncounterGeometry | null
   sunToTargetDirection?: Vector3Tuple | null
   actualEntryDirection?: Vector3Tuple | null
   entryFlightDirection?: Vector3Tuple | null
@@ -122,6 +124,7 @@ export function PlanetCorridorPlanner({
   onDeltaVPlusChange,
   sectionNumber,
   passage,
+  localEncounter = null,
   sunToTargetDirection = null,
   actualEntryDirection = null,
   entryFlightDirection = null,
@@ -166,8 +169,11 @@ export function PlanetCorridorPlanner({
         color: sun.color,
         hasRings: false,
       }
-    : localPlanet
-  const localPlanetMoons = localPlanet
+    : selectedTarget && 'parentId' in selectedTarget && localPlanet
+      ? { ...localPlanet, id: selectedTarget.id, name: selectedTarget.name,
+          radiusKm: localEncounter?.bodyRadiusKm ?? 0, hasRings: false, color: '#b8bdc7' }
+      : localPlanet
+  const localPlanetMoons = localPlanet && localThreeDBody?.id === localPlanet.id
     ? moons.filter((moon) => moon.parentId === localPlanet.id)
     : []
   const autoProjectionTargetRef = useRef('')
@@ -506,11 +512,11 @@ export function PlanetCorridorPlanner({
       </div>
 
       {!isInterstellarTarget && <div className={`corridor-feasibility-status ${feasibility.blocked ? 'blocked' : 'clear'}`} role="status">
-        <strong>{feasibility.blocked ? 'Zielkorridor gesperrt' : 'Zielkorridor frei'}</strong>
+        <strong>{feasibility.blocked ? 'Korridorvorgabe gesperrt' : 'Korridorvorgabe geometrisch frei'}</strong>
         <span>
           {feasibility.blocked
             ? feasibility.reasons.join(' ')
-            : `${clearanceLabel} wird eingehalten.`}
+            : `${clearanceLabel} in der Vorgabe. Anflug und Abflug müssen separat berechnet und auf Kollision geprüft werden.`}
         </span>
       </div>}
 
@@ -518,6 +524,7 @@ export function PlanetCorridorPlanner({
         ? (
           <div className="corridor-local-three-d">
             <LocalPlanetThreeD
+              localEncounter={localEncounter}
               planet={localThreeDBody}
               moons={localPlanetMoons}
               epochLabel={epochLabel}

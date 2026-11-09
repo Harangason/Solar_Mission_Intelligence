@@ -8,7 +8,7 @@ from typing import Callable
 
 import numpy as np
 from scipy.integrate import solve_ivp
-from scipy.optimize import least_squares, minimize_scalar
+from scipy.optimize import brentq, least_squares, minimize_scalar
 
 from solver.trajectory import (
     DAY_SECONDS,
@@ -396,7 +396,7 @@ def propagate_conic(initial_state, duration_seconds, mu, *, sample_count=180,
             raise RuntimeError("Gravitationszentrum erreicht.")
         acceleration=gravity_acceleration(t,y) if gravity_acceleration else -mu*y[:3]/radius**3
         return np.r_[y[3:],acceleration]
-    events=[]; names=[]
+    events=[]; names=[]; collision_surfaces=[]
     if stop_radius_km is not None:
         def crossing(t,y):
             return float(np.linalg.norm(y[:3])) - stop_radius_km
@@ -416,22 +416,70 @@ def propagate_conic(initial_state, duration_seconds, mu, *, sample_count=180,
             return float(np.linalg.norm(y[:3]))-collision_radius_km
         collision.direction=-1; collision.terminal=True
         events.append(collision); names.append("collision")
+        collision.closest_approach = lambda t, y: float(np.dot(y[:3], y[3:]))
+        collision_surfaces.append(("collision", collision))
     for collision_name,callback in other_collisions or []:
         callback.direction=-1;callback.terminal=True
         events.append(callback);names.append('collision:'+collision_name)
-    local_scale=np.sqrt(np.linalg.norm(initial[:3])**3/mu)
+        collision_surfaces.append(('collision:'+collision_name, callback))
+    # A fast encounter can enter AND leave a body within one accepted step.
+    # Surface sign changes alone miss that event. Locate the distance minimum
+    # independently, then bracket the first surface crossing on dense output.
+    minimum_events = {}
+    for name, surface in collision_surfaces:
+        closest = getattr(surface, 'closest_approach', None)
+        if closest is not None:
+            closest.direction = 1
+            closest.terminal = False
+            minimum_events[name] = len(events)
+            events.append(closest); names.append('closest-approach:'+name)
+    initial_hits = [{'type':name,'elapsedSeconds':0.,'state':initial.tolist()}
+                    for name,surface in collision_surfaces if surface(0.,initial)<=0]
+    if initial_hits:
+        return {'trajectory':[{'elapsedSeconds':0.,'positionKm':initial[:3].tolist(),'velocityKmS':initial[3:].tolist()}],
+                'durationSeconds':0.,'events':initial_hits,'finalPositionKm':initial[:3].tolist(),
+                'finalVelocityKmS':initial[3:].tolist(),'collision':True,'successful':True}
     solution=solve_ivp(derivative,(0.,duration_seconds),initial,method="DOP853",
                        rtol=2e-11,atol=[1e-6]*3+[1e-11]*3,dense_output=True,
                        max_step=max(1.,duration_seconds/120),
                        events=events or None)
     if not solution.success:
         raise RuntimeError(solution.message)
-    end=float(solution.t[-1]); times=np.linspace(0.,end,max(2,sample_count+1))
+    end=float(solution.t[-1])
+    detected=[]
+    for name, surface in collision_surfaces:
+        clearance = lambda t: surface(t, solution.sol(t))
+        if clearance(0.) <= 0:
+            detected.append((0., name))
+            continue
+        if name in minimum_events:
+            minima = solution.t_events[minimum_events[name]]
+        else:
+            minima = [minimize_scalar(clearance, bounds=(a,b), method='bounded',
+                                      options={'xatol':1e-7}).x
+                      for a,b in zip(solution.t[:-1],solution.t[1:])]
+        for t in minima:
+            if clearance(t) > 0:
+                continue
+            left_index = max(0, int(np.searchsorted(solution.t, t, side='left'))-1)
+            while left_index > 0 and clearance(solution.t[left_index]) <= 0:
+                left_index -= 1
+            impact = brentq(clearance, float(solution.t[left_index]), float(t), xtol=1e-8)
+            detected.append((impact, name))
+    if detected:
+        end=min(end,min(t for t,_ in detected))
+    # Retain adaptive steps near periapsis as well as uniform overview samples.
+    # Uniform samples alone turn a resolved close approach into long chords.
+    times=np.unique(np.r_[np.linspace(0.,end,max(2,sample_count+1)),solution.t[solution.t<=end]])
     samples=solution.sol(times)
     emitted=[{"elapsedSeconds":float(t),"positionKm":samples[:3,i].tolist(),
               "velocityKmS":samples[3:,i].tolist()} for i,t in enumerate(times)]
     found=[{"type":names[i],"elapsedSeconds":float(t),"state":solution.y_events[i][j].tolist()}
-           for i,values in enumerate(solution.t_events or []) for j,t in enumerate(values)]
+           for i,values in enumerate(solution.t_events or []) for j,t in enumerate(values)
+           if t <= end+1e-8 and not names[i].startswith('closest-approach:')]
+    found.extend({'type':name,'elapsedSeconds':t,'state':solution.sol(t).tolist()}
+                 for t,name in detected if abs(t-end)<=1e-8
+                 and not any(e['type']==name for e in found))
     return {"trajectory":emitted,"durationSeconds":end,"events":found,
             "finalPositionKm":samples[:3,-1].tolist(),"finalVelocityKmS":samples[3:,-1].tolist(),
             "collision":any(e["type"].startswith("collision") for e in found),"successful":True}

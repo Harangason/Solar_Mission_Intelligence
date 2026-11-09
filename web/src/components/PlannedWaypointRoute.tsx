@@ -120,6 +120,8 @@ export interface WaypointRouteResult {
   trajectory: Array<{
     elapsedDays: number
     positionKm: [number, number, number]
+    velocityKmS?: [number, number, number]
+    phase?: string
     waypointPositionKm?: [number, number, number]
     waypointRelativePositionKm?: [number, number, number]
   }>

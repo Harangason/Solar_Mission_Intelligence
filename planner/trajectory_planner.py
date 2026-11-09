@@ -261,6 +261,10 @@ class PhysicalRoute:
             def check(t,y,other=other):
                 cp,_=self.body(center,begin_seconds+t);bp,_=self.body(other.id,begin_seconds+t)
                 return float(np.linalg.norm(cp+y[:3]-bp))-other.radius_km
+            def closest(t,y,other=other):
+                cp,cv=self.body(center,begin_seconds+t);bp,bv=self.body(other.id,begin_seconds+t)
+                return float(np.dot(cp+y[:3]-bp,cv+y[3:]-bv))
+            check.closest_approach=closest
             collisions.append((other.id,check))
         result=propagate_conic(relative,duration,body.mass_kg*G_KM3_KG_S2,
             sample_count=count or self.values["simulation"]["sampleTrajectoryPoints"],

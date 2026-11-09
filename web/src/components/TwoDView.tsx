@@ -7,6 +7,8 @@ import { TrajectoryPlannerPanel } from './TrajectoryPlannerPanel'
 import { trajectoryToWaypointRoute } from '../trajectoryToWaypointRoute'
 import { DEFAULT_ROUTE_SECTION, DEFAULT_ROUTE_PASSAGE } from '../routeSections'
 import { useRouteEphemerides } from '../bodyEphemerides'
+import { localEncounterGeometry } from '../localEncounterGeometry'
+import { LocalEncounterPlot } from './LocalEncounterPlot'
 import {
   useEffect,
   useMemo,
@@ -34,7 +36,6 @@ import { DEFAULT_MISSION_CONFIG } from '../missionSimulation'
 import { sanitizeMoonCatalogue } from '../moonCatalogue'
 import { createOrbitPoints, planetPositionAt, toScenePosition } from '../orbitalMath'
 import {
-  directionBetweenRouteObjects,
   interstellarTargetDirection,
 } from '../routeObjectDirections'
 import { projectPhysicsDirectionToView } from '../routeDirectionMath'
@@ -937,49 +938,11 @@ export function TwoDView({
     && routeSections[activeRouteSectionIndex + 1]?.originId === activeRouteSection?.targetId
     ? routeSections[activeRouteSectionIndex + 1]
     : null
-  const calculatedNextRouteSection = linkedNextRouteSection
-    ? plannedRoute?.routeSections?.find((section) => section.id === linkedNextRouteSection.id) ?? null
-    : null
-  const entryFlightDirection = useMemo<Vector3Tuple | null>(() => {
-    if (!data || !activeRouteSection) return null
-    const targetTimestamp = timestampMs
-      + (calculatedActiveRouteSection?.entryDay ?? 0) * 86_400_000
-    return directionBetweenRouteObjects(
-      activeRouteSection.originId,
-      activeRouteSection.targetId,
-      timestampMs,
-      targetTimestamp,
-      data.planets,
-      moonCatalogue?.moons ?? [],
-    )
-  }, [activeRouteSection, calculatedActiveRouteSection?.entryDay, data, moonCatalogue, timestampMs])
-  const exitFlightDirection = useMemo<Vector3Tuple | null>(() => {
-    const solverDirection = calculatedActiveRouteSection?.corridor.exitAngleSelection?.desiredExitDirection
-      ?? calculatedNextRouteSection?.desiredDepartureDirection
-      ?? calculatedNextRouteSection?.predictedOutgoingDirection
-    if (solverDirection) return solverDirection
-    if (!data || !activeRouteSection || !linkedNextRouteSection) return null
-    const originTimestamp = timestampMs
-      + (calculatedActiveRouteSection?.exitDay ?? calculatedActiveRouteSection?.entryDay ?? 0) * 86_400_000
-    const targetTimestamp = timestampMs
-      + (calculatedNextRouteSection?.entryDay ?? calculatedActiveRouteSection?.exitDay ?? 0) * 86_400_000
-    return directionBetweenRouteObjects(
-      activeRouteSection.targetId,
-      linkedNextRouteSection.targetId,
-      originTimestamp,
-      targetTimestamp,
-      data.planets,
-      moonCatalogue?.moons ?? [],
-    )
-  }, [
-    activeRouteSection,
-    calculatedActiveRouteSection,
-    calculatedNextRouteSection,
-    data,
-    linkedNextRouteSection,
-    moonCatalogue,
-    timestampMs,
-  ])
+  const activeBodyRadius = data?.planets.find(body => body.id === activeRouteSection?.targetId)?.radiusKm
+    ?? (activeRouteSection?.targetId === 'sun' ? data?.sun.radiusKm : 0)
+  const activeLocalEncounter = useMemo(() => localEncounterGeometry(
+    plannedRoute, activeRouteSection?.id, activeBodyRadius ?? 0,
+  ), [plannedRoute, activeRouteSection?.id, activeBodyRadius])
   const sunToActiveTargetDirection = useMemo<Vector3Tuple | null>(() => {
     if (!data || !activeRouteSection || activeRouteSection.targetId === 'sun') return null
     if (isInterstellarRouteObject(activeRouteSection.targetId)) return null
@@ -3381,9 +3344,8 @@ export function TwoDView({
                   passage={activeRouteSection.passage}
                   sunToTargetDirection={sunToActiveTargetDirection}
                   actualEntryDirection={calculatedActiveRouteSection?.entryDirection ?? null}
-                  entryFlightDirection={entryFlightDirection}
+                  localEncounter={activeLocalEncounter}
                   exitRadialDirection={calculatedActiveRouteSection?.corridor.exitAngleSelection?.desiredExitRadialDirection ?? null}
-                  exitFlightDirection={exitFlightDirection}
                   passageNormalDirection={calculatedActiveRouteSection?.corridor.exitAngleSelection?.optimizedPassageNormal ?? null}
                   entrySourceName={routeObjectName(activeRouteSection.originId, data.planets, moonCatalogue?.moons ?? [])}
                   exitTargetName={linkedNextRouteSection
@@ -3626,6 +3588,7 @@ export function TwoDView({
       {previewSection && (
         <RoutePreviewDialog
           section={previewSection}
+          route={plannedRoute}
           calculatedSection={plannedRoute?.routeSections?.find((section) => section.id === previewSection.id) ?? null}
           previousSection={previewPreviousSection}
           nextSection={previewNextSection}
@@ -3876,13 +3839,6 @@ function routePreviewGeometry(
     }
   }
 
-  const linkedExitAngle = directionSign > 0
-    ? Math.atan2(-exitVector.x, exitVector.y)
-    : Math.atan2(exitVector.x, -exitVector.y)
-  let targetedOrbitDeg = positiveAngleDeg(
-    directionSign * (linkedExitAngle - entryAngle) * 180 / Math.PI,
-  )
-  while (targetedOrbitDeg + 0.0001 < requestedOrbitDeg) targetedOrbitDeg += 360
   const calculatedSelection = calculatedSection?.corridor.exitAngleSelection
   const solverSelectedOrbitDeg = Math.abs(
     calculatedSection?.selectedPassageAngleDeg
@@ -3893,9 +3849,7 @@ function routePreviewGeometry(
     ? 0
     : hasLinkedExit && solverSelectedOrbitDeg + 0.0001 >= requestedOrbitDeg
       ? solverSelectedOrbitDeg
-      : hasLinkedExit
-        ? targetedOrbitDeg
-        : requestedOrbitDeg
+      : requestedOrbitDeg
   const selectedExitAngle = entryAngle + directionSign * (selectedOrbitDeg * Math.PI / 180)
   const exitAngle = section.passage.mode === 'direct' ? directExitAngle : selectedExitAngle
   const corridorEndAngle = exitAngle
@@ -3912,15 +3866,9 @@ function routePreviewGeometry(
   const exitTarget = hasLinkedExit
     ? previewRayEndpoint(exit, exitTangent)
     : targetHeadingEndpoint
-  const asymptoteLift = section.passage.entryBehavior.includes('tangential') ? 0 : 10
-  const entryControlA = { x: origin.x + 210, y: center.y + asymptoteLift }
   const entryControlB = addPoint(entry, scaleVector(entryTangent, -132))
   const exitStart = exit
   const exitControlA = addPoint(exitStart, scaleVector(exitTangent, 132))
-  const exitControlB = addPoint(
-    addPoint(exitTarget, scaleVector(exitTangent, -120)),
-    scaleVector(radialVector(exitAngle), 24),
-  )
   const optimumPath = section.passage.mode === 'direct'
     ? `M ${entry.x.toFixed(2)} ${entry.y.toFixed(2)} L ${exit.x.toFixed(2)} ${exit.y.toFixed(2)}`
     : sampledArcPath(center, corridorRadius, entryAngle, corridorEndAngle)
@@ -3947,16 +3895,17 @@ function routePreviewGeometry(
     exit: exitStart,
     entryInner,
     exitInner,
-    entryPath: `M ${origin.x} ${origin.y} C ${entryControlA.x} ${entryControlA.y}, ${entryControlB.x} ${entryControlB.y}, ${entry.x} ${entry.y}`,
+    entryPath: `M ${entryControlB.x} ${entryControlB.y} L ${entry.x} ${entry.y}`,
     minBoundaryPath,
     maxBoundaryPath,
     passagePath: optimumPath,
-    exitPath: `M ${exitStart.x} ${exitStart.y} C ${exitControlA.x} ${exitControlA.y}, ${exitControlB.x} ${exitControlB.y}, ${exitTarget.x} ${exitTarget.y}`,
+    exitPath: `M ${exitStart.x} ${exitStart.y} L ${exitControlA.x} ${exitControlA.y}`,
     corridorPath: `${outerPath} ${innerPath} Z`,
   }
 }
 
 function RoutePreviewDialog({
+  route,
   section,
   calculatedSection,
   previousSection,
@@ -3966,6 +3915,7 @@ function RoutePreviewDialog({
   onClose,
   onApply,
 }: {
+  route: WaypointRouteResult | null
   section: RouteSectionDefinition
   calculatedSection: CalculatedRouteSection | null
   previousSection: RouteSectionDefinition | null
@@ -3995,6 +3945,9 @@ function RoutePreviewDialog({
     : hasRouteContext
       ? 'Routenende'
       : 'freier Austritt'
+  const local = localEncounterGeometry(route, section.id,
+    planets.find(body => body.id === section.targetId)?.radiusKm
+      ?? (section.targetId === 'sun' ? 696340 : 0))
   const preview = routePreviewGeometry(section, nextSection, calculatedSection)
   const exitLeadsToInterstellarTarget = Boolean(
     nextSection?.originId === section.targetId
@@ -4030,13 +3983,13 @@ function RoutePreviewDialog({
     >
       <header>
         <div>
-          <small>Abschnittsvorschau · Quelle für 3D</small>
+          <small>{local ? "Berechneter körperbezogener Verlauf" : "Abschnittsvorgabe · keine berechnete Flugbahn"}</small>
           <h2 id="route-preview-title">{originName} → {targetName}</h2>
         </div>
         <button type="button" className="wizard-close" aria-label="Vorschau schließen" onClick={onClose}>×</button>
       </header>
       <div className="route-preview-content">
-        <svg viewBox="0 0 1000 620" className="route-preview-canvas editor-layout" role="img" aria-label="Vorschau vom Ursprung bis Austritt">
+        {local ? <LocalEncounterPlot geometry={local} bodyName={targetName} /> : <svg viewBox="0 0 1000 620" className="route-preview-canvas editor-layout" role="img" aria-label="Vorschau vom Ursprung bis Austritt">
           <defs>
             <marker id="route-preview-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
               <path d="M 0 0 L 8 4 L 0 8 Z" />
@@ -4049,7 +4002,7 @@ function RoutePreviewDialog({
             <text x={preview.center.x + 14} y="52" className="coordinate-axis-label">+z / +y · Korridorprojektion</text>
           </g>
           <text x="24" y="30" className="preview-note">Logische Abschnittsskizze · nicht maßstabsgetreu</text>
-          <text x="24" y="50" className="preview-note">Startreferenz bleibt fix; Loop zeigt lokale Passage am Zielkörper</text>
+          <text x="24" y="50" className="preview-note">Vorgabe · Anflug, Einfangmanöver und Abflug noch nicht berechnet</text>
           <circle cx={preview.origin.x} cy={preview.origin.y} r="22" className="preview-origin" />
           <text x={preview.origin.x} y={preview.origin.y + 44} textAnchor="middle">{originName}</text>
           <circle cx={preview.center.x} cy={preview.center.y} r={preview.radius} className="preview-target" />
@@ -4086,12 +4039,27 @@ function RoutePreviewDialog({
               Zielrichtung → {exitName} · {projectedTargetAxis}
             </text>
           )}
-          <text x={preview.center.x + 118} y={preview.center.y - 4} className="preview-note">Optimum</text>
-        </svg>
+          <text x={preview.center.x + 118} y={preview.center.y - 4} className="preview-note">Vorgabe</text>
+        </svg>}
+        {local ? <>
+          <p role="status">{local.feasible ? 'Gemäß Berechnung machbar.' : 'Modellroute – nicht als flugfähig bestätigt.'}</p>
+          <div className="route-preview-legend" aria-label="Legende der Abschnittsvorschau">
+            <span><i className="passage" />Berechnete Bahn</span>
+            <span><i className="entry" />Lokale Geschwindigkeit · sichtbare Randpunkte</span>
+            <span>Einfangmanöver · orange</span>
+          </div>
+          <dl className="route-preview-state">
+            <div><dt>Eintrittsgeschwindigkeit relativ zum Körper</dt><dd>{Math.hypot(...local.entry.velocity).toFixed(3)} km/s</dd></div>
+            <div><dt>Geschwindigkeit am Abschnittsende</dt><dd>{Math.hypot(...local.exit.velocity).toFixed(3)} km/s</dd></div>
+            <div><dt>Eintrittsradius · ab Körperzentrum</dt><dd>{Math.hypot(...local.entry.position).toLocaleString('de-DE', { maximumFractionDigits: 1 })} km</dd></div>
+            <div><dt>Kleinste Höhe über der Oberfläche</dt><dd>{local.minimumAltitudeKm.toFixed(3)} km</dd></div>
+            <div><dt>Δv der lokalen Manöver</dt><dd>{local.insertionDeltaVKmS?.toFixed(3) ?? '–'} km/s</dd></div>
+          </dl>
+        </> : <>
         <div className="route-preview-legend" aria-label="Legende der Abschnittsvorschau">
-          <span><i className="entry" />Anflugbahn</span>
+          <span><i className="entry" />{local ? "Körperbezogene Geschwindigkeit" : "Eintrittstangente · Vorgabe"}</span>
           <span><i className="passage" />Lokale Passage</span>
-          <span><i className="prediction" />Prognosebahn zum zukünftigen Folgeziel</span>
+          <span><i className="prediction" />{local ? "Berechneter Verlauf" : "Austrittstangente · Vorgabe"}</span>
           <span><i className="heading" />Zukünftige Zielrichtung</span>
           <span><i className="boundary" />Korridorgrenzen</span>
         </div>
@@ -4122,13 +4090,14 @@ function RoutePreviewDialog({
               {preview.exitAngleDeg.toFixed(1)}° · +x-Bezug
               {preview.hasLinkedExit ? ' · gekoppelt' : ''}
               {preview.lineOfSightClear
-                ? ' · freie Außentangente'
+                ? ' · nur geometrische Tangente'
                 : preview.bestApproximation
                   ? ' · gekrümmter Transfer'
                   : ' · Sicht ungeklärt'}
             </dd>
           </div>
         </dl>
+        </>}
         <section className="route-preview-ai" aria-labelledby="route-preview-ai-title">
           <h3 id="route-preview-ai-title">Interaktiv verfeinern</h3>
           <div className="route-preview-chips">

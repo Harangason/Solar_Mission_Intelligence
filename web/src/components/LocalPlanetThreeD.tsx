@@ -9,10 +9,11 @@ import {
   type CorridorTuple,
   type EntryCorridorDefinition,
 } from '../entryCorridorGeometry'
-import { planetTextureUrl } from '../planetTextures'
+import { PLANET_TEXTURES, planetTextureUrl } from '../planetTextures'
 import { orthogonalizedScenePlaneNormal } from '../routeDirectionMath'
 import type { RouteBoundaryBehavior, RoutePassageDefinition, RoutePassageDirection } from '../routeSections'
 import type { MoonData, PlanetData, SunData } from '../types'
+import { localEncounterRuns, type LocalEncounterGeometry } from '../localEncounterGeometry'
 
 interface LocalPlanetThreeDProps {
   planet: LocalThreeDBody
@@ -27,6 +28,7 @@ interface LocalPlanetThreeDProps {
   entrySourceName?: string | null
   exitTargetName?: string | null
   passage: RoutePassageDefinition
+  localEncounter?: LocalEncounterGeometry | null
 }
 
 type LocalThreeDBody = (PlanetData | SunData) & {
@@ -104,7 +106,13 @@ function TexturedPlanetBody({ planet }: { planet: LocalThreeDBody }) {
 function PlanetBody({ planet }: { planet: LocalThreeDBody }) {
   return planet.id === 'sun'
     ? <SunBody sun={planet} />
-    : <TexturedPlanetBody planet={planet} />
+    : PLANET_TEXTURES[planet.id] ? <TexturedPlanetBody planet={planet} /> : <LocalTargetMoon id={planet.id} />
+}
+
+function LocalTargetMoon({ id }: { id: string }) {
+  const texture = useMemo(() => createMoonSurfaceTexture(id), [id])
+  useEffect(() => () => texture.dispose(), [texture])
+  return <mesh><sphereGeometry args={[1.7, 64, 64]} /><meshStandardMaterial map={texture} roughness={1} /></mesh>
 }
 
 function stableSeed(value: string) {
@@ -466,6 +474,7 @@ function LocalPlanetScene({
   exitFlightDirection = null,
   passageNormalDirection = null,
   passage,
+  localEncounter = null,
 }: Omit<LocalPlanetThreeDProps, 'epochLabel'>) {
   const selectedEntryDirection = actualEntryDirection ?? corridorDefinition.centerDirection
   const selectedPassageNormal = targetCoupledPassageNormal(
@@ -521,6 +530,18 @@ function LocalPlanetScene({
       <pointLight position={[5, -2, -4]} intensity={0.25} color="#79e4ff" />
       <PlanetBody planet={planet} />
       <LocalMoons moons={moons} />
+      {localEncounter ? <group>
+        {localEncounterRuns(localEncounter, 2.5).map((run, index) => (
+          <group key={index}>
+            <Line points={run.map(s => physicsToScene(new THREE.Vector3(...s.position)).multiplyScalar(1.7 / localEncounter.bodyRadiusKm))} color="#fff06f" lineWidth={3} />
+            {[run[0], run[run.length - 1]].map((s, i) => <arrowHelper key={i} args={[
+              physicsToScene(new THREE.Vector3(...s.velocity)).normalize(),
+              physicsToScene(new THREE.Vector3(...s.position)).multiplyScalar(1.7 / localEncounter.bodyRadiusKm),
+              0.45, i === 0 ? '#67dcff' : '#ff9f67', 0.12, 0.07,
+            ]} />)}
+          </group>
+        ))}
+      </group> : <>
       <CorridorEnvelope
         definition={corridorDefinition}
         anchor={passageGeometry.entryPoint}
@@ -538,6 +559,7 @@ function LocalPlanetScene({
         centerColor="#ffe1a8"
       />
       <PassageTrajectory geometry={passageGeometry} />
+      </>}
       <OrbitControls makeDefault enablePan={false} enableDamping dampingFactor={0.08} minDistance={4.2} maxDistance={15} />
     </>
   )
@@ -556,6 +578,7 @@ export function LocalPlanetThreeD({
   entrySourceName = null,
   exitTargetName = null,
   passage,
+  localEncounter = null,
 }: LocalPlanetThreeDProps) {
   const representedMoons = Math.min(
     MAX_VISIBLE_MOONS,
@@ -573,6 +596,7 @@ export function LocalPlanetThreeD({
       <div className="local-planet-three-d-canvas" role="img" aria-label={`Lokale dreidimensionale Ansicht von ${planet.name}`}>
         <Canvas shadows camera={{ position: [0, 3.4, 8.8], fov: 46, near: 0.05, far: 80 }}>
           <LocalPlanetScene
+            localEncounter={localEncounter}
             planet={planet}
             moons={moons}
             corridorDefinition={corridorDefinition}
@@ -586,10 +610,13 @@ export function LocalPlanetThreeD({
         </Canvas>
       </div>
       <footer className="local-three-d-legend" aria-label="Legende der lokalen 3D-Ansicht">
+        <strong>{localEncounter ? `Berechneter Nahbereich · Höhe min. ${localEncounter.minimumAltitudeKm.toFixed(1)} km · Körper und Bahn im selben Maßstab` : 'Vorgabeskizze · Anflug, Einfangmanöver und Abflug noch nicht berechnet'}</strong>
+        {localEncounter && <strong>{localEncounter.feasible ? 'Gemäß Berechnung machbar' : 'Modellroute · nicht als flugfähig bestätigt'}</strong>}
+        {localEncounter && <span>Pfeile: lokale Geschwindigkeit an den sichtbaren Randpunkten. SOI-Eintritt: {Math.hypot(...localEncounter.entry.velocity).toFixed(3)} km/s · Abschnittsende: {Math.hypot(...localEncounter.exit.velocity).toFixed(3)} km/s relativ zu {planet.name}.</span>}
         <span className="entry">Eintritt{entrySourceName ? ` · von ${entrySourceName}` : ''}</span>
         <span className="exit">Austritt{exitTargetName ? ` · nach ${exitTargetName}` : ' · kein Folgeziel'}</span>
-        <span className="entry-vector">Eintrittsvektor · {passage.entryBehavior}</span>
-        <span className="passage">{passage.mode === 'full-orbit' ? 'Volle Umrundung · 360°' : passage.mode === 'partial-orbit' ? `Teilumrundung · ${passage.orbitAngleDeg}°` : 'Direkter Vorbeiflug · ungebunden'}</span>
+        {!localEncounter && <><span className="entry-vector">Eintrittsvorgabe · {passage.entryBehavior}</span>
+        <span className="passage">{passage.mode === 'full-orbit' ? 'Volle Umrundung · 360°' : passage.mode === 'partial-orbit' ? `Teilumrundung · ${passage.orbitAngleDeg}°` : 'Direkter Vorbeiflug · ungebunden'}</span></>}
         {passage.mode === 'direct' && <span className="safe">Sicherheitsgrenze · keine Einfangbahn</span>}
         <span className="moons">Monde · animierter Zeitraffer</span>
       </footer>
